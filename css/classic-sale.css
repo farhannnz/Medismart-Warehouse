@@ -1,0 +1,27 @@
+/* MediSmart-style Sale / Billing window */
+.mdi .empty svg { width:36px; height:36px; opacity:.4; }
+.msw { display:flex; flex-direction:column; height:100%; min-height:520px; background:#fffbd5; border:1px solid #cdc38a; position:relative; }
+.msband { height:24px; background:linear-gradient(#5f9a2c,#3e7d12); color:#fff; display:flex; align-items:center; justify-content:flex-end; gap:8px; padding:0 10px; font-size:14px; letter-spacing:.5px; }
+.msband .mslogo svg { width:16px; height:16px; } .msband b { font-weight:700; }
+.mshead { display:grid; grid-template-columns:150px 1fr 1fr; grid-template-rows:auto auto; gap:4px 12px; padding:6px 10px; background:#fffbd5; align-items:center; }
+.msbadge { grid-row:1 / 3; display:flex; align-items:center; gap:8px; background:#f1e9a0; border:1px solid #d8cf80; padding:6px 10px; } .msbadge .rx { width:36px; height:36px; border-radius:50%; background:#f3c316; border:2px solid #d99c00; display:grid; place-items:center; color:#a35; font-weight:800; font-style:italic; } .msbadge b { color:#4c8a1c; font-size:16px; } .msbadge small { color:#555; }
+.msfld { display:flex; align-items:center; gap:6px; } .msfld label { white-space:nowrap; color:#222; } .msfld.wide .in { flex:1; min-width:0; } .msfld .g { display:inline-block; padding:2px 6px; background:#eee; border:1px solid #bbb; }
+.mshead .msfld:nth-child(2) { grid-column:2; } .mshead .msfld:nth-child(4) { grid-column:2; } .mshead .msfld:nth-child(3) { grid-column:3; grid-row:1; } .mshead .msfld:nth-child(5) { grid-column:3; grid-row:2; }
+.mshead .in, .msentry .in, .mspb .in, .mstot .in { background:#fffff4; }
+.subtab { padding:0 10px; } .subtab span { display:inline-block; padding:2px 10px; background:#fffbd5; border:1px solid #bbb; border-bottom:0; font-size:11.5px; margin-bottom:-1px; }
+.msgrid { flex:1; min-height:140px; background:#fffbd5; border:1px solid #c9bf74; margin:0 10px; overflow:auto; }
+.msgrid table.t { background:#fffbd5; } .msgrid .t th { background:#fffbd5; border:0; border-bottom:1px solid #c9bf74; border-right:1px solid #e4dc9d; position:sticky; top:0; } .msgrid .t td { border-bottom:1px solid #e4dc9d; background:#fffff4; }
+.mdi .msgrid .t tbody tr:nth-child(even) td { background:#fffff4; } .msgrid .t tr.sel td { background:#1e7fe0 !important; color:#fff; } .msgrid .t tr.sel td .in { background:#fff; color:#111; }
+.msgrid .t td .in { padding:0 3px; height:19px; width:100%; text-align:right; } .msgrid .t td .in[data-b] { text-align:left; } .msgrid .qn { background:#f1e6a8 !important; font-weight:700; }
+.msentry { padding:6px 10px 2px; } .ehead, .erow { display:flex; gap:2px; align-items:center; } .ehead span { font-size:11.5px; color:#222; } .erow .in { height:22px; padding:0 4px; border-radius:0; }
+.sres { display:none; position:absolute; left:0; bottom:100%; width:min(640px,80vw); max-height:260px; overflow:auto; background:#fff; border:1px solid #6a86a8; box-shadow:2px 3px 8px rgba(0,0,0,.3); z-index:70; }
+.sres .it { display:flex; justify-content:space-between; gap:12px; padding:2px 6px; cursor:default; border-bottom:1px solid #eee; } .sres .it.on, .sres .it:hover { background:#1e7fe0; color:#fff; } .sres .it small { color:inherit; opacity:.75; } .sres .pr { text-align:right; white-space:nowrap; } .sres .pr small { margin-left:8px; }
+.msbot { display:grid; grid-template-columns:1fr 330px; gap:10px; padding:4px 10px; }
+.mspanel { background:#fffbd5; border:1px solid #c9bf74; } .subtabs { display:flex; gap:2px; } .subtabs span { padding:2px 10px; background:#f1e9a0; border:1px solid #c9bf74; border-top:0; font-size:11.5px; } .subtabs span.on { background:#fffbd5; }
+.mspb { padding:6px 8px; display:flex; flex-direction:column; gap:6px; } .r3 { display:flex; align-items:center; gap:6px; } .r3 .in { width:64px; } .r3 label { white-space:nowrap; }
+.mstot { background:#fffbd5; border:1px solid #c9bf74; padding:6px 8px; display:flex; flex-direction:column; gap:3px; } .tl { display:flex; align-items:center; gap:6px; } .tl label { min-width:40px; text-align:right; } .tl .in { flex:1; text-align:right; }
+.net { display:flex; justify-content:space-between; align-items:center; background:#fffff4; border:1px solid #bbb; padding:2px 8px; } .net span { font-size:15px; color:#4c8a1c; font-weight:700; } .net b { font-size:22px; }
+.paybar { display:flex; } .paybar button { flex:1; border:1px solid #2d6c06; background:#d9e7c8; color:#2d5a06; font-weight:700; padding:1px 0; cursor:pointer; font-size:11px; } .paybar button.on { background:#3d7d12; color:#fff; }
+.msbtns { display:flex; gap:6px; padding:5px 10px 6px; border-top:1px solid #c9bf74; background:#fffbd5; } .msbtns .sp { flex:1; }
+.mb { border:0; background:transparent; padding:3px 8px; font:inherit; cursor:pointer; color:#111; } .mb:hover { background:#e4eefa; outline:1px solid #8fb0d8; }
+@media (max-width:900px) { .mshead { grid-template-columns:1fr; } .msbadge, .mshead .msfld { grid-column:1 !important; grid-row:auto !important; } .msbot { grid-template-columns:1fr; } .ehead { display:none; } .erow { flex-wrap:wrap; } }

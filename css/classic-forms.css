@@ -1,0 +1,34 @@
+/* MediSmart-style Purchase, Delivery Note, Batch Edit, Expiry Claim, Item and Account dialogs */
+.msw.pw { min-height:560px; }
+.phead { display:grid; grid-template-columns:330px 1fr; gap:10px; padding:6px 10px; }
+.phead fieldset { border:1px solid #c9bf74; background:#fffbd5; padding:4px 10px 8px; margin:0; display:flex; flex-direction:column; gap:4px; min-width:0; }
+.phead legend { font-size:11.5px; padding:0 4px; color:#222; }
+.pf { display:flex; align-items:center; gap:6px; min-width:0; } .pf > label:first-child { min-width:78px; text-align:right; white-space:nowrap; }
+.pf.wide .in { flex:1; min-width:0; } .pf .in { background:#fffff4; } .pf .fld { flex:1; } .pf .fld > label { display:none; }
+.pf .chk { margin-left:6px; }
+.pgrid { flex:1; min-height:170px; margin:0 10px; border:1px solid #c9bf74; background:#fffbd5; overflow:auto; padding:2px; }
+.pgrid .tw { border-radius:0; } .pgrid .t th { background:#fffbd5; border:0; border-bottom:1px solid #c9bf74; border-right:1px solid #e4dc9d; }
+.pgrid .t td { background:#fffff4 !important; border-bottom:1px solid #e4dc9d; padding:1px 3px; } .pgrid .in.sm { height:20px; padding:0 3px; border-radius:0; }
+.pgrid .hr td { background:#fffbd5 !important; } .pgrid .row { margin-top:4px; }
+/* Batch edit */
+.bew { min-height:520px; background:#fff; border:0; } .bew .msband { display:none; }
+.beh { padding:6px 12px; display:flex; flex-direction:column; gap:4px; } .betitle { font-size:20px; font-weight:700; color:#2f5fa3; } .besub { color:#222; margin-bottom:4px; } .beh .pf > label:first-child { min-width:40px; }
+.bew .msgrid { background:#fff; margin:4px 12px; } .bew .msgrid .t th, .bew .msgrid .t td { background:#fff; }
+.bew .msgrid .t td .in { height:19px; } .bef { margin:6px 12px; } .befl, .befi { display:grid; grid-template-columns:repeat(10,1fr); gap:3px; } .befl span { text-align:right; padding-right:6px; font-size:11.5px; } .befi .in { text-align:right; background:#f0f0f0; } .befi .in:not([readonly]) { background:#fff; }
+/* Expiry claim */
+.ecw { background:#fff; border:0; min-height:520px; } .ecw .msband { display:none; }
+.bigtabs { padding:2px 4px 0; } .bigtabs span { cursor:pointer; padding:2px 14px; } .bigtabs span.on { background:#fff; font-weight:700; }
+.echd { display:grid; grid-template-columns:auto auto 1fr auto; gap:6px 12px; padding:8px 10px; align-items:center; } .echd .pf > label:first-child { min-width:0; }
+.echd .pf.wide { grid-column:span 2; } .bx { border:1px solid #8a97a8 !important; background:linear-gradient(#fdfdfd,#e4e8ee) !important; margin-left:8px; }
+.ecg { display:grid; grid-template-columns:1fr 1fr; gap:6px; padding:0 10px; } .ecg .msgrid { margin:0; height:46vh; background:#fff; } .ecg .msgrid .t td, .ecg .msgrid .t th { background:#fff; }
+.ecg .t tr.sel td { background:#6aa22b !important; color:#fff; } .ecf { align-items:center; border-top:0; background:#fff; }
+/* Blue master dialogs */
+.bluepg { min-height:560px; background:radial-gradient(circle at 20% 20%,#2b4f8e,#173a72 70%); display:grid; place-items:center; position:relative; padding:20px; }
+.bluelogo { position:absolute; right:14px; top:8px; background:#fff; padding:2px 8px; font-weight:800; color:#2f6fb3; display:flex; gap:6px; align-items:center; } .bluelogo svg { width:16px; height:16px; } .bluelogo em { font-style:normal; color:#555; }
+.dlg { width:min(560px,100%); background:#f4f4f4; border:1px solid #8aa; box-shadow:0 6px 24px rgba(0,0,0,.45); }
+.dlgh { display:flex; align-items:center; gap:10px; padding:10px 14px; } .dlgh b { color:#2f5fa3; font-size:16px; } .dlgh small { color:#333; } .dico svg { width:34px; height:34px; color:#2f6fb3; }
+.dlgb { padding:6px 14px 10px; } .dlgg { display:grid; grid-template-columns:1fr 1fr; gap:6px 14px; margin-top:8px; } .dlgg.one { grid-template-columns:1fr; }
+.dlgr { display:flex; align-items:center; gap:6px; } .dlgr.full { grid-column:1 / -1; } .dlgr > label { min-width:92px; text-align:right; white-space:nowrap; } .dlgr .in { flex:1; min-width:0; }
+.dlgf { display:flex; justify-content:flex-end; gap:8px; padding:8px 14px 12px; } .dlgf .mb { border:1px solid #8a97a8; background:linear-gradient(#fdfdfd,#e4e8ee); border-radius:3px; padding:3px 14px; }
+@media (max-width:900px) { .phead, .echd, .ecg { grid-template-columns:1fr; } .echd .pf.wide { grid-column:auto; } .dlgg { grid-template-columns:1fr; } }
+.mdi #pt, .mdi #ot, .mdi #at, .mdi #tb { display:none !important; }
