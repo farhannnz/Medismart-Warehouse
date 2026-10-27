@@ -353,7 +353,10 @@ function shopLink() {
   /* outgoing: request + return */
   var nr = svc.newRequest; svc.newRequest = function (o) {
     var r = nr.apply(this, arguments), D = PD.DB;
-    C.send('request', 'warehouse', r.no, { type: 'request', shop: D.shop.name, no: r.no, date: r.date, note: r.note, by: r.by, lines: r.lines.map(function (l) { return { name: svc.itemName(l.itemId), qty: l.qty, unit: l.unit }; }) });
+    C.send('request', 'warehouse', r.no, { type: 'request', shop: D.shop.name, no: r.no, date: r.date, note: r.note, by: r.by, lines: r.lines.map(function (l) {
+      var it = svc.item(l.itemId), per = it && it.punit === 'Strip' && it.conv > 1 ? it.conv : 1;
+      return l.unit === 'sale' && per > 1 ? { name: it.name, qty: Math.ceil(l.qty / per), unit: 'purchase', tabs: l.qty } : { name: svc.itemName(l.itemId), qty: l.qty, unit: 'purchase' };
+    }) });
     return r;
   };
   var cr = svc.cancelRequest; svc.cancelRequest = function (id) {

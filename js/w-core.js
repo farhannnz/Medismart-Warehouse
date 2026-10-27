@@ -95,8 +95,8 @@ svc.wImportRequest = function (f) {
   if (D().wreq.some(function (r) { return r.shopId === shop.id && r.extNo === f.no; })) throw new Error('Request ' + f.no + ' from ' + shop.name + ' is already imported');
   var lines = f.lines.map(function (l) {
     var it = D().items.find(function (i) { return i.name.toLowerCase() === String(l.name || '').toLowerCase(); });
-    var conv = l.unit === 'purchase' ? ((it && it.conv) || 1) : 1;
-    return { name: l.name, itemId: it ? it.id : '', qty: PD.num(l.qty), unit: l.unit === 'purchase' ? 'purchase' : 'sale', qtyS: PD.r2(PD.num(l.qty) * conv) };
+    var per = (it && it.per) || 1, strips = l.unit === 'sale' && l.tabs ? Math.ceil(PD.num(l.qty) / per) : PD.num(l.qty);
+    return { name: l.name, itemId: it ? it.id : '', qty: strips, unit: 'purchase', qtyS: strips };
   });
   var r = { id: PD.uid('wr'), no: svc.docNo('REQ-', 'WREQ'), extNo: f.no, shopId: shop.id, date: f.date || PD.today(), note: f.note || '', lines: lines, status: 'Pending', picked: [], dispIds: [], got: PD.today() };
   D().wreq.push(r); PD.log('Request imported ' + r.no, shop.name + ' ' + f.no); PD.save(); return r;
@@ -148,10 +148,10 @@ svc.wDispatch = function (reqId, note) {
 };
 svc.wDispatchFile = function (d) {
   return { type: 'dispatch', v: 2, warehouse: D().settings.whName, no: d.no, date: d.date, requestNo: d.extNo, by: d.by, note: d.note,
-    lines: d.lines.map(function (l, i) { var it = svc.item(l.itemId); return { name: it.name, generic: it.generic, cat: it.cat, schedule: it.schedule, mfr: svc.mfrName(it.mfrId), unit: it.unit, punit: it.punit, conv: it.conv, hsn: it.hsn, tax: l.tax, reqIdx: i, batchNo: l.batchNo, expiry: l.expiry, mrp: l.mrp, rate: l.rate, qty: l.qty, serials: l.serials }; }) };
+    lines: d.lines.map(function (l, i) { var it = svc.item(l.itemId); return { name: it.name, generic: it.generic, cat: it.cat, schedule: it.schedule, mfr: svc.mfrName(it.mfrId), unit: it.unit, punit: it.punit, conv: it.conv, per: it.per || 1, sunit: it.sunit || 'Tab', hsn: it.hsn, tax: l.tax, reqIdx: i, batchNo: l.batchNo, expiry: l.expiry, mrp: l.mrp, rate: l.rate, qty: l.qty, serials: l.serials }; }) };
 };
 svc.wItemsFile = function () {
-  return { type: 'items', warehouse: D().settings.whName, items: D().items.filter(function (i) { return i.active !== false; }).map(function (i) { return { name: i.name, generic: i.generic, cat: i.cat, schedule: i.schedule, mfr: svc.mfrName(i.mfrId), tax: i.tax, mrp: i.mrp, unit: i.unit, punit: i.punit, conv: i.conv, reorder: i.reorder, hsn: i.hsn, division: i.division }; }) };
+  return { type: 'items', warehouse: D().settings.whName, items: D().items.filter(function (i) { return i.active !== false; }).map(function (i) { return { name: i.name, generic: i.generic, cat: i.cat, schedule: i.schedule, mfr: svc.mfrName(i.mfrId), tax: i.tax, mrp: i.mrp, unit: i.unit, punit: i.punit, conv: i.conv, per: i.per || 1, sunit: i.sunit || 'Tab', reorder: i.reorder, hsn: i.hsn, division: i.division }; }) };
 };
 
 /* ---------- returns from shops ---------- */

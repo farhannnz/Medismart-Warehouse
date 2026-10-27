@@ -126,7 +126,7 @@ PD.views.expclaim = { render: function (host, arg) {
 function bluePage(title, sub, icon, inner) { return '<div class="bluepg"><div class="bluelogo">' + PD.icon('pill') + 'Medi<em>smart</em></div><div class="dlg"><div class="dlgh"><span class="dico">' + PD.icon(icon) + '</span><div><b>' + title + '</b><br><small>' + sub + '</small></div></div>' + inner + '</div></div>'; }
 PD.views.itemdlg = { render: function (host, arg) {
   var D = PD.DB, cur = null;
-  var F = [['name', 'Name :', 'text', 1], ['generic', 'Generic Name :', 'text', 1], ['pack', 'Pack :', 'text'], ['tax', 'GST % :', 'number'], ['hsn', 'HSN code :', 'text'], ['punit', 'Box / Pack unit :', 'text'], ['unit', 'Strip unit :', 'text'], ['conv', 'Strips per box :', 'number'], ['cat', 'Type :', 'sel:cat'], ['schedule', 'Schedule :', 'sel:sch'], ['mfrId', 'Manufacturer :', 'sel:mfr'], ['division', 'Division :', 'text'], ['reorder', 'Reorder Quantity :', 'number'], ['margin', 'Margin % :', 'number'], ['rack', 'Shelf * :', 'shelf'], ['mrp', 'MRP per strip :', 'number'], ['remarks', 'Remarks :', 'text', 1]];
+  var F = [['name', 'Name :', 'text', 1], ['generic', 'Generic Name :', 'text', 1], ['pack', 'Pack :', 'text'], ['tax', 'GST % :', 'number'], ['hsn', 'HSN code :', 'text'], ['per', 'Tablets per strip :', 'number'], ['sunit', 'Shop sells as (Tab / Cap / ml) :', 'text'], ['cat', 'Type :', 'sel:cat'], ['schedule', 'Schedule :', 'sel:sch'], ['mfrId', 'Manufacturer :', 'sel:mfr'], ['division', 'Division :', 'text'], ['reorder', 'Reorder level (strips) :', 'number'], ['margin', 'Margin % :', 'number'], ['rack', 'Shelf * :', 'shelf'], ['mrp', 'MRP per strip :', 'number'], ['remarks', 'Remarks :', 'text', 1]];
   function ctl(f, v) {
     var k = f[0], t = f[2], a = ' data-k="' + k + '"';
     if (t === 'shelf') return '<input class="in"' + a + ' list="shelfs" value="' + esc(v == null ? '' : v) + '" placeholder="e.g. A1" style="border-color:#2f6fb3"><datalist id="shelfs">' + svc.shelfList().map(function (x) { return '<option value="' + esc(x) + '">'; }).join('') + '</datalist>';
@@ -134,12 +134,13 @@ PD.views.itemdlg = { render: function (host, arg) {
     return '<input class="in"' + a + ' type="' + (t === 'number' ? 'number' : 'text') + '"' + (t === 'number' ? ' step="any"' : '') + ' value="' + esc(v == null ? '' : v) + '">';
   }
   function draw() {
-    var r = cur || { cat: PD.CATS[0], tax: D.settings.defaultTax, vat: 0, unit: 'Strip', punit: 'Box', conv: 1, margin: 20, reorder: 10, batch: true };
+    var r = cur || { cat: PD.CATS[0], tax: D.settings.defaultTax, vat: 0, unit: 'Strip', punit: 'Strip', conv: 1, per: 10, sunit: 'Tab', margin: 20, reorder: 10, batch: true };
+    if (cur && cur.per == null) r = Object.assign({}, cur, { per: 10, sunit: cur.sunit || 'Tab' });
     host.innerHTML = bluePage('ITEM', 'Create medicines. Shops get their list from here', 'pill', '<div class="dlgb"><div class="dlgr"><label>ID :</label><input class="in" id="iid" readonly value="' + (cur ? PD.itemNo(cur.id) : '') + '" style="width:110px"><button class="mb" id="ifind" title="Find">🔍</button><input class="in" id="ifq" placeholder="type name to find" autocomplete="off" style="flex:1"></div>' +
       '<div class="dlgg">' + F.map(function (f) { return '<div class="dlgr ' + (f[3] ? 'full' : '') + '"><label>' + f[1] + '</label>' + ctl(f, r[f[0]]) + '</div>'; }).join('') + '</div></div>' +
       '<div class="dlgf"><button class="mb" id="idl">✕ Delete</button><button class="mb" id="iup">⟲ Update</button><button class="mb" id="isv">💾 Save</button></div>');
     PD.combo($('#ifq', host), { source: PD.itemSource({}), onPick: function (x) { cur = svc.item(x.id); draw(); } });
-    function read() { var v = {}; F.forEach(function (f) { var el = $('[data-k="' + f[0] + '"]', host), x = el.value; v[f[0]] = f[2] === 'number' ? (x === '' ? 0 : PD.num(x)) : x.trim(); }); if (!v.name) throw new Error('Enter the item name'); if (!v.rack) throw new Error('Give the item a shelf. This is where the strips will be kept in the warehouse.'); if (!(v.mrp > 0)) throw new Error('Enter the MRP per strip'); if (!(v.conv >= 1)) v.conv = 1; return v; }
+    function read() { var v = {}; F.forEach(function (f) { var el = $('[data-k="' + f[0] + '"]', host), x = el.value; v[f[0]] = f[2] === 'number' ? (x === '' ? 0 : PD.num(x)) : x.trim(); }); if (!v.name) throw new Error('Enter the item name'); if (!v.rack) throw new Error('Give the item a shelf. This is where the strips will be kept in the warehouse.'); if (!(v.mrp > 0)) throw new Error('Enter the MRP per strip'); if (!(v.per >= 1)) throw new Error('Enter how many tablets are in one strip (1 for syrup, tube, injection)'); v.per = Math.round(v.per); v.sunit = v.sunit || 'Tab'; v.unit = 'Strip'; v.punit = 'Strip'; v.conv = 1; return v; }
     function store(isNew) {
       try {
         var v = read(), rec = isNew ? Object.assign({ batch: true, active: true }, v) : Object.assign({}, cur, v);
