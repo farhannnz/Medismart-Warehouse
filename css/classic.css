@@ -55,3 +55,9 @@ table.gt { width:100%; border-collapse:collapse; } .gt th { position:sticky; top
 .login .card.box { border-radius:3px; border:1px solid #6a86a8; background:#f4f4f4; padding:22px 26px; box-shadow:4px 6px 18px rgba(0,0,0,.5); width:340px; } .login h1 { font-size:18px; color:#1d3d68; } .login .in { border:1px solid #9aa5b3; border-radius:2px; padding:4px 6px; }
 .login .btn.p { background:linear-gradient(#fdfdfd,#e4e8ee); color:#111; border:1px solid #2f6fb3; border-radius:3px; box-shadow:none; }
 @media (max-width:900px) { .docks { display:none; } .mdi .bill { grid-template-columns:1fr; } .lstrip { display:none; } .titlebar span:nth-child(n+4) { display:none; } .menubar { overflow-x:auto; } }
+
+/* toolbar buttons with text labels */
+.tbtn.lbl { width:auto; display:flex; align-items:center; gap:5px; padding:0 8px; }
+.tbtn.lbl span { font-size:12px; color:#2b2b2b; white-space:nowrap; }
+[data-theme="dark"] .tbtn.lbl span { color:#ddd; }
+@media (max-width:1200px) { .tbtn.lbl span { display:none; } .tbtn.lbl { padding:0 4px; } }

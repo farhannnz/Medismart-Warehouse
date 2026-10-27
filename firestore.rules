@@ -1,0 +1,16 @@
+rules_version = '2';
+// Medismart: the shop and the warehouse each have one online account.
+// Each app can only read/write its own data; both can use the shared "exchange" link.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isShop() { return request.auth != null && request.auth.token.email == 'shop@medismart.app'; }
+    function isWarehouse() { return request.auth != null && request.auth.token.email == 'warehouse@medismart.app'; }
+
+    match /apps/shop/{rest=**} { allow read, write: if isShop(); }
+    match /apps/shop { allow read, write: if isShop(); }
+    match /apps/warehouse/{rest=**} { allow read, write: if isWarehouse(); }
+    match /apps/warehouse { allow read, write: if isWarehouse(); }
+
+    match /exchange/{id} { allow read, write: if isShop() || isWarehouse(); }
+  }
+}

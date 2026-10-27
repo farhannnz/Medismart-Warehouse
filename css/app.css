@@ -151,3 +151,6 @@ table.t { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 @media print {
   .side, .top, .no-print, .toasts { display: none !important; } body, .app { background: #fff; display: block; } .view { padding: 0; } .card { box-shadow: none; border: 0; }
 }
+
+/* online save indicator */
+.sync{margin-right:12px;font-size:12px;white-space:nowrap}.sync.offline,.sync.error{color:#c62828;font-weight:700}.sync.saving{opacity:.75}

@@ -27,9 +27,10 @@ PD.applyTheme = function () {
 /* ---------- boot ---------- */
 function boot() {
   PD.load().then(function (db) {
-    if (db && db.v) { PD.DB = db; migrate(); }
-    else { PD.DB = PD.blank(); try { PD.seed(); svc.wPrune(); } catch (e) { console.error('seed', e); } migrate(); PD.flush(); }
-    PD.applyTheme();
+    var fresh = !(db && db.v);
+    PD.DB = fresh ? PD.blank() : db; migrate();
+    PD.applyTheme(); PD.cloud.start();
+    if (fresh || !PD.DB.setupDone) { PD.firstRun(function () { loginScreen(); }); return; }
     var uid = sessionStorage.getItem('wh_user');
     PD.user = uid ? PD.DB.users.find(function (u) { return u.id === uid && u.active !== false; }) : null;
     if (PD.user) { shell(); landing(false); } else loginScreen();
@@ -39,16 +40,15 @@ function migrate() {
   var B = PD.blank(), D = PD.DB;
   Object.keys(B).forEach(function (k) { if (D[k] === undefined) D[k] = B[k]; });
   Object.keys(B.settings).forEach(function (k) { if (D.settings[k] === undefined) D.settings[k] = B.settings[k]; });
-  svc.currentYear(); svc.wSeed();
+  svc.currentYear(); D.wSeeded = true;
 }
 
 /* ---------- login ---------- */
 function loginScreen() {
-  var demo = PD.DB.demo && PD.DB.users.some(function (u) { return u.username === 'admin' && u.pass === PD.hash('admin'); });
   document.body.innerHTML = '<div class="login"><div class="card box"><div class="brand" style="padding:0;color:var(--ink)"><span class="lg">' + PD.icon('pill') + '</span><b>Medismart Warehouse</b></div><h1>Welcome back</h1><p class="mut">Sign in to the warehouse.</p><br>' +
     '<div class="fld"><label>Username</label><input class="in" id="lu" autocomplete="username" autofocus></div><div class="fld" style="margin-top:12px"><label>Password</label><input class="in" id="lp" type="password" autocomplete="current-password"></div>' +
     '<p id="le" style="color:var(--bad);min-height:20px;margin:8px 0 0"></p><button class="btn p lg" id="lb" style="width:100%;margin-top:6px">Sign in</button>' +
-    (demo ? '<p class="hint" style="margin-top:14px">Demo data is loaded. Sign in with <b>admin</b> / <b>admin</b> (or <b>keeper</b> / <b>keeper</b>), then change the passwords in Settings.</p>' : '') + '</div></div>';
+    '</div></div>';
   function go() {
     var u = PD.DB.users.find(function (x) { return x.username.toLowerCase() === $('#lu').value.trim().toLowerCase() && x.active !== false; });
     if (!u || u.pass !== PD.hash($('#lp').value)) { $('#le').textContent = 'Wrong username or password.'; return; }
@@ -61,9 +61,9 @@ PD.logout = function () { if (PD.user && PD.DB.settings.autoPunch) svc.punchOut(
 /* ---------- shell: classic MDI desktop (menu bar, toolbar, window tabs, docked lists, status bar) ---------- */
 var MENUS = [
   ['File', [
-    ['Attendance (Punch In / Out)', 'attendance'], '-', ['Backup && Restore', 'settings', { tab: 'data' }], ['Activity Log', 'settings', { tab: 'log' }], '-', ['Change User', 'logout'], ['Exit', 'logout']]],
+    ['Attendance (Punch In / Out)', 'attendance'], '-', ['Backup && Restore', 'settings', { tab: 'data' }], ['Activity Log', 'settings', { tab: 'log' }], '-', ['Log Out', 'logout'], ['Disconnect this computer', 'disconnect']]],
   ['Items', [
-    ['New / Edit Item', 'itemdlg'], ['Manufacturers', 'masters', { tab: 'mfrs' }], ['Item List for Shops (file)', 'itemsexport']]],
+    ['New / Edit Item', 'itemdlg'], ['Manufacturers', 'masters', { tab: 'mfrs' }]]],
   ['Stock', [
     ['Add Stock (goods received)', 'wadd', null, 'F2'], ['Current Stock', 'wstock', null, 'F5'], ['Shelves', 'wshelves'], ['Strip Lookup (scan)', 'wscan', null, 'F6'], '-',
     ['Lot-wise Stock', 'wrep', { report: 'lots' }], ['Expiry Report', 'wrep', { report: 'expiry' }], ['Low Stock', 'wrep', { report: 'low' }], ['Written-off Stock', 'wrep', { report: 'bad' }]]],
@@ -74,21 +74,19 @@ var MENUS = [
     ['All Reports', 'wrep', null, 'F7'], ['Stock Valuation', 'wrep', { report: 'val' }], ['Goods Received Register', 'wrep', { report: 'inward' }], ['Dispatch Register', 'wrep', { report: 'disp' }], ['Medicine-wise Dispatch', 'wrep', { report: 'itemsent' }], ['Attendance', 'wrep', { report: 'att' }]]],
   ['Tools', [
     ['Staff && Rights', 'settings', { tab: 'users' }], ['Options', 'settings', { tab: 'shop' }], ['Attendance Register', 'attendance'], ['Backup && Data', 'settings', { tab: 'data' }]]],
-  ['View', [['Item List Panel', 'dock:items'], ['Messages Panel', 'dock:msg'], '-', ['Dark Mode', 'toggle:dark']]],
-  ['Window', [['Close All Windows', 'closeall'], ['Close Other Windows', 'closeother'], '-', ['%wins']]],
+  ['View', [['Medicine List Panel', 'dock:items'], ['Alerts Panel', 'dock:msg'], '-', ['Close All Windows', 'closeall'], ['Dark Mode', 'toggle:dark']]],
   ['Help', [['Find Anything...', 'palette', null, 'Ctrl+I'], '-', ['About', 'about']]]
 ];
 /* toolbar: [title, icon, action, colour] */
 var TOOLS = [
-  ['Close window', 'x', 'closecur', '#c62828'], ['Log out', 'lock', 'logout', '#7a8a2e'], '|',
-  ['Add stock (F2)', 'cart', 'wadd', '#2e8b57'], ['Stock (F5)', 'box', 'wstock', '#8a5a2b'], ['Shelves', 'box', 'wshelves', '#2f6fb3'], ['Strip lookup (F6)', 'explore', 'wscan', '#7b5ea7'], '|',
+  ['Add stock (F2)', 'cart', 'wadd', '#2e8b57'], ['Stock (F5)', 'box', 'wstock', '#8a5a2b'], ['Strip lookup (F6)', 'explore', 'wscan', '#7b5ea7'], '|',
   ['Shop requests (F3)', 'order', 'wreq', '#1e88a8'], ['Returns (F4)', 'ret', 'wret', '#c77d00'], '|',
   ['New / edit item', 'pill', 'itemdlg', '#2f6fb3'], ['Reports (F7)', 'report', 'wrep', '#1e88a8'], '|',
-  ['Attendance', 'users', 'attendance', '#2e8b57'], ['Settings', 'gear', 'settings', '#666']
+  ['Settings', 'gear', 'settings', '#666'], ['Log out', 'lock', 'logout', '#7a8a2e']
 ];
 var TITLES = {}; NAV.forEach(function (g) { g[1].forEach(function (i) { TITLES[i[0]] = i[1]; }); }); TITLES.home = 'Warehouse'; TITLES.masters = 'Manufacturers'; TITLES.itemsexport = 'Item List for Shops'; TITLES.attendance = 'Attendance'; TITLES.shelves = 'Shelves'; TITLES.itemsimport = 'Import Item List'; TITLES.dnote = 'Delivery Note'; TITLES.batchedit = 'Batch Edit'; TITLES.expclaim = 'ExpiryClaim'; TITLES.itemdlg = 'Item'; TITLES.acctdlg = 'Account Details'; TITLES.request = 'Stock Request'; TITLES.reqlist = 'Request List'; TITLES.receive = 'Receive Stock'; TITLES.attendance = 'Attendance'; TITLES.custhist = 'Customer History';
 var RIGHT = { wadd: 'addstock', wstock: 'stock', wshelves: 'stock', wscan: 'stock', wreq: 'requests', wret: 'returns', wrep: 'reports', itemdlg: 'items', itemsexport: 'items', masters: 'items', settings: 'users' };
-var wins = [], cur = 'home', docks = { items: true, mfrs: false, sups: false, msg: true }, ui = { toolbar: true, status: true };
+var wins = [], cur = 'home', docks = { items: false, mfrs: false, sups: false, msg: true }, ui = { toolbar: true, status: true };
 PD.go = function (route, arg) { openWin(route, arg); };
 
 function wkey(route, arg) { return route + ':' + ((arg && (arg.tab || arg.report)) || ''); }
@@ -116,10 +114,11 @@ function act(a) {
   if (!a) return;
   var m;
   if (a === 'palette') return palette();
+  if (a === 'disconnect') return PD.confirm('Disconnect this computer from the online account? You will need the online password to connect again.', 'Disconnect', true).then(function (ok) { if (ok) { PD.logout(); PD.cloud.signOut(); } });
   if (a === 'closecur') return cur === 'home' ? 0 : closeWin(cur);
   if (a === 'closeall') { wins = []; cur = 'home'; return renderWin(); }
   if (a === 'closeother') { wins = wins.filter(function (w) { return w.key === cur; }); return renderWin(); }
-  if (a === 'about') return PD.modal({ title: 'About Medismart', size: 'sm', body: '<p><b>Medismart Warehouse</b> - pharmacy billing, stock keeping &amp; accounting.</p><p class="mut">Data is stored in this browser. Use File → Backup &amp; Restore regularly.</p>', foot: [{ label: 'OK', cls: 'p' }] });
+  if (a === 'about') return PD.modal({ title: 'About Medismart', size: 'sm', body: '<p><b>Medismart Warehouse</b> - pharmacy billing, stock keeping &amp; accounting.</p><p class="mut">Data is saved online (Firebase) and shared with the shops automatically.</p>', foot: [{ label: 'OK', cls: 'p' }] });
   if (a === 'save') { var b = $('#view .btn.p:not(:disabled)'); return b && b.click(); }
   if (a === 'clear') { var w = wins.find(function (x) { return x.key === cur; }); if (w) { w.arg = { fresh: 1, tab: w.arg && w.arg.tab }; renderWin(); } return; }
   if ((m = /^nav:(-?1)$/.exec(a))) { var ks = ['home'].concat(wins.map(function (w) { return w.key; })), i = ks.indexOf(cur); cur = ks[(i + (+m[1]) + ks.length) % ks.length]; return renderWin(); }
@@ -131,15 +130,15 @@ function act(a) {
   var p = a.split(':'); openWin(p[0], p[1] ? { tab: p[1] } : null);
 }
 function shell() {
-  var tb = TOOLS.filter(function (t) { return t === '|' || can(t[2].split(':')[0]) || ACTION_RX.test(t[2]) || t[2] === 'save' || t[2] === 'clear'; }).map(function (t) { return t === '|' ? '<i class="tsep"></i>' : '<button class="tbtn" title="' + esc(t[0]) + '" data-a="' + t[2] + '" style="color:' + t[3] + '">' + PD.icon(t[1]) + '</button>'; }).join('');
+  var tb = TOOLS.filter(function (t) { return t === '|' || can(t[2].split(':')[0]) || ACTION_RX.test(t[2]) || t[2] === 'save' || t[2] === 'clear'; }).map(function (t) { return t === '|' ? '<i class="tsep"></i>' : '<button class="tbtn lbl" title="' + esc(t[0]) + '" data-a="' + t[2] + '" style="color:' + t[3] + '">' + PD.icon(t[1]) + '<span>' + esc(t[0].replace(/\s*\(.*\)$/, '')) + '</span></button>'; }).join('');
   document.body.className = 'mdi';
-  document.body.innerHTML = '<div class="win"><div class="titlebar"><span class="ico">' + PD.icon('pill') + '</span><b>' + esc(PD.DB.shop.name) + '</b><span>Warehouse software</span><span id="dbt"></span><span class="sp"></span><span class="wc">—&nbsp;&nbsp;▢&nbsp;&nbsp;✕</span></div>' +
+  document.body.innerHTML = '<div class="win"><div class="titlebar"><span class="ico">' + PD.icon('pill') + '</span><b>' + esc(PD.DB.shop.name) + '</b><span class="sp"></span><span id="dbt"></span></div>' +
     '<div class="menubar" id="mbar"></div><div class="toolbar" id="tbar">' + tb + '<span class="sp"></span><div class="msearch">' + PD.icon('search') + '<input id="gsr" placeholder="Search (Ctrl+I)" readonly></div></div>' +
-    '<div class="mdi-body"><div class="lstrip" id="lstrip"><button data-a="wshelves">Shelves</button><button data-a="wscan">Strip lookup</button></div>' +
+    '<div class="mdi-body"><div class="lstrip" id="lstrip" style="display:none"></div>' +
     '<div class="mdi-main"><div class="wtabs" id="wtabs"></div><main class="view" id="view"></main></div><div class="docks" id="docks"></div></div>' +
-    '<div class="statusbar" id="sbar"><span id="rc"></span><span class="sp"></span><span id="bell" class="bell" title="Alerts"></span><span class="usr">' + PD.icon('users') + esc(PD.user.name) + '</span><b class="plog">Ware<em>house</em></b><span id="clk"></span></div></div>';
-  $('#dbt').textContent = 'Strip-wise stock with barcode labels';
-  drawMenus(); drawDocks();
+    '<div class="statusbar" id="sbar"><span id="rc"></span><span class="sp"></span><span id="sync" class="sync"></span><span id="bell" class="bell" title="Alerts"></span><span class="usr">' + PD.icon('users') + esc(PD.user.name) + '</span><b class="plog">Ware<em>house</em></b><span id="clk"></span></div></div>';
+  $('#dbt').textContent = 'Warehouse';
+  drawMenus(); drawDocks(); PD.cloud.paint();
   $('#gsr').onclick = palette;
   PD.on($('#tbar'), 'click', '[data-a]', function (e, t) { act(t.dataset.a); });
   PD.on($('#lstrip'), 'click', '[data-a]', function (e, t) { act(t.dataset.a); });
@@ -153,7 +152,7 @@ function landing(fresh) {
 }
 PD.refreshAlerts = function () { var n = PD.alerts(), b = $('#bell'); if (b) { var hot = n.filter(function (x) { return x.lvl !== 'info'; }).length; b.textContent = '🔔 ' + n.length; b.className = 'bell' + (hot ? ' hot' : ''); } if (docks.msg) fillDock('msg', ''); };
 function tick() { var c = $('#clk'); if (c) { var d = new Date(); c.textContent = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ', ' + d.toLocaleTimeString('en-US'); } }
-var ACTION_RX = /^(dock|toggle|nav|closecur|closeall|closeother|palette|about|home|logout)/;
+var ACTION_RX = /^(dock|toggle|nav|closecur|closeall|closeother|palette|about|home|logout|disconnect)/;
 function okItem(it) { if (it === '-' || it[0] === '%wins') return true; if (it[4] === 'direct' && !PD.DB.settings.allowDirect) return false; if (ACTION_RX.test(it[1])) return true; return can(it[1]); }
 function menuItems(i) { var a = MENUS[i][1].map(function (it, n) { return { it: it, n: n }; }).filter(function (x) { return okItem(x.it); }), out = []; a.forEach(function (x) { if (x.it === '-' && (!out.length || out[out.length - 1].it === '-')) return; out.push(x); }); while (out.length && out[out.length - 1].it === '-') out.pop(); return out; }
 function drawMenus() {
@@ -173,7 +172,9 @@ function drawMenus() {
   bar.addEventListener('mouseover', function (e) { var mi = e.target.closest('.mi'); if (mi && openI >= 0 && +mi.dataset.i !== openI) show(+mi.dataset.i); });
   document.addEventListener('mousedown', function (e) { if (!e.target.closest || !e.target.closest('#mbar')) show(-1); });
 }
-function runItem(it) { if (/^(dock|toggle|nav|closecur|closeall|closeother|palette|about)/.test(it[1])) act(it[1]); else openWin(it[1], it[2] || null); }
+function runItem(it) { if (/^(dock|toggle|nav|closecur|closeall|closeother|palette|about|disconnect)/.test(it[1])) act(it[1]); else openWin(it[1], it[2] || null); }
+/* data changed on another computer or arrived from a shop: refresh lists on screen (forms in progress are left alone) */
+PD.onRemote = function () { if (!PD.user || !$('#view')) return; PD.refreshAlerts && PD.refreshAlerts(); if (docks.items) fillDock('items', ''); var w = wins.find(function (x) { return x.key === cur; }); if (!w || /^(wret|wstock|wshelves)$/.test(w.route) || (w.route === 'wreq' && !(PD.DB.wreq.some(function (r) { return r.picked && r.picked.length; })))) renderWin(); };
 function drawDocks() {
   var host = $('#docks'); if (!host) return;
   var D = PD.DB, order = ['items', 'mfrs', 'sups', 'msg'].filter(function (k) { return docks[k]; });
@@ -239,7 +240,6 @@ function palette() {
   var cmds = [];
   NAV.forEach(function (g) { g[1].forEach(function (i) { if (can(i[0])) cmds.push({ t: 'Go to ' + i[1], icon: i[2], fn: function () { PD.go(i[0]); }, k: i[1] }); }); });
   cmds.push({ t: 'New sale bill', icon: 'bill', fn: function () { PD.go('billing', { fresh: 1 }); }, k: 'new sale bill billing' });
-  cmds.push({ t: 'New purchase invoice', icon: 'cart', fn: function () { PD.go('purchase', { fresh: 1 }); }, k: 'new purchase invoice' });
   cmds.push({ t: 'Toggle dark mode', icon: 'moon', fn: function () { act('toggle:dark'); }, k: 'dark light theme mode' });
   PD.DB.items.forEach(function (it) { cmds.push({ t: it.name + ' — ' + it.generic, icon: 'pill', fn: function () { PD.go('explore', { itemId: it.id }); }, k: (it.name + ' ' + it.generic).toLowerCase(), sub: 'Product' }); });
   var ov = PD.el('<div class="ov" style="align-items:start;padding-top:12vh"><div class="pal"><input placeholder="Type a command, page or medicine..." autofocus><ul></ul></div></div>'), inp = $('input', ov), ul = $('ul', ov), idx = 0, list = [];
