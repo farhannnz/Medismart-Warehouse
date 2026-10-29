@@ -25,31 +25,7 @@ PD.views.settings = { render: function (host, arg) {
     PD.on(el, 'click', '[data-ac]', function (e, t) { $('#acc', el).value = t.dataset.ac; });
     $('#sv', el).onclick = function () { S.theme = $('[data-k=theme]', el).value; S.density = $('[data-k=density]', el).value; S.accent = $('#acc', el).value; PD.$$('[data-cc]', el).forEach(function (i) { S.catColors[i.dataset.cc] = i.value; }); S.scheduleColors = $('#sch', el).checked; PD.save(); PD.applyTheme(); PD.toast('Appearance updated', 'ok'); };
   }
-  function users(el) {
-    var rep = PD.report(el, { id: 'users', title: 'Users & access rights', load: function () { return { cols: [{ k: 'name', label: 'Name', fmt: function (v) { return '<b>' + esc(v) + '</b>'; } }, { k: 'username', label: 'Username' }, { k: 'role', label: 'Role', fmt: function (v) { return '<span class="badge ' + (v === 'Admin' ? 'brand' : '') + '">' + v + '</span>'; } }, { k: 'rights', label: 'Access', raw: function (r) { return r.role === 'Admin' ? 'Everything' : PD.RIGHTS.filter(function (x) { return r.rights && r.rights[x[0]]; }).map(function (x) { return x[1]; }).join(', '); }, fmt: function (v) { return '<small class="mut">' + esc(v) + '</small>'; } }, { k: 'active', label: 'Status', fmt: function (v) { return v === false ? '<span class="badge bad">disabled</span>' : '<span class="badge ok">active</span>'; } }], rows: D.users }; }, drill: function (r) { edit(r); } });
-    PD.$('#r-act', el).insertAdjacentHTML('afterbegin', '<button class="btn p sm" id="nu">' + PD.icon('plus') + 'Add user</button><button class="btn sm" id="cp">' + PD.icon('lock') + 'Change my password</button>');
-    $('#nu', el).onclick = function () { edit(null); };
-    $('#cp', el).onclick = function () {
-      var f = [{ k: 'old', label: 'Current password', type: 'password' }, { k: 'n1', label: 'New password', type: 'password' }, { k: 'n2', label: 'Repeat new password', type: 'password' }];
-      PD.modal({ title: 'Change password', size: 'sm', body: PD.formHTML(f, {}, ''), foot: [{ label: 'Cancel' }, { label: 'Change', cls: 'p', fn: function (api) { try { var v = PD.readForm(api.body, f); if (PD.user.pass !== PD.hash(v.old)) throw new Error('Current password is wrong'); if (v.n1.length < 4) throw new Error('Use at least 4 characters'); if (v.n1 !== v.n2) throw new Error('New passwords do not match'); PD.user.pass = PD.hash(v.n1); PD.log('Password changed'); PD.save(); PD.toast('Password changed', 'ok'); } catch (e) { PD.err(e); return false; } } }] });
-    };
-    function edit(u) {
-      var isNew = !u, f = [{ k: 'name', label: 'Full name', req: true }, { k: 'username', label: 'Username', req: true }, { k: 'pass', label: isNew ? 'Password' : 'New password (leave blank to keep)', type: 'password' }, { k: 'role', label: 'Role', type: 'select', options: (u && u.role === 'Admin') ? ['Admin'] : ['Staff'] }, { k: 'active', label: 'Active', type: 'checkbox' }];
-      var cur = u || { role: 'Staff', active: true, rights: { dashboard: true, billing: true, salesret: true, explore: true } };
-      PD.modal({ title: isNew ? 'Add user' : 'Edit user', size: 'lg', body: PD.formHTML(f, Object.assign({}, cur, { pass: '' })) + '<h4 style="margin:16px 0 8px">What can this user open?</h4><div class="form c3" id="rg">' + PD.RIGHTS.map(function (r) { return '<label class="chk"><input type="checkbox" data-rt="' + r[0] + '"' + (cur.rights && cur.rights[r[0]] ? ' checked' : '') + '> ' + esc(r[1]) + '</label>'; }).join('') + '</div><p class="hint">There is exactly <b>one Admin</b> (the shop owner) who can open everything. Staff only see the sections ticked here. Attendance is automatic at login; tick "Attendance register" only for a manager who should see everyone.</p>', foot: [{ label: 'Cancel' }, { label: 'Save user', cls: 'p', fn: function (api) {
-        try {
-          var v = PD.readForm(api.body, f); if (isNew && !v.pass) throw new Error('Set a password');
-          if (D.users.some(function (x) { return x.id !== (u && u.id) && x.username.toLowerCase() === v.username.toLowerCase(); })) throw new Error('That username is taken');
-          var rights = {}; PD.$$('[data-rt]', api.body).forEach(function (c) { rights[c.dataset.rt] = c.checked; });
-          var rec = u || { id: PD.uid('u') }; rec.name = v.name; rec.username = v.username; rec.role = v.role; rec.active = v.active; rec.rights = rights; if (v.pass) rec.pass = PD.hash(v.pass);
-          if (u && u.role === 'Admin' && (!v.active || v.role !== 'Admin')) throw new Error('The Admin account cannot be disabled or changed to another role');
-          if (!u && v.role === 'Admin') throw new Error('Only one Admin is allowed');
-          if (u && u.id === PD.user.id && (!v.active || v.role !== 'Admin')) throw new Error('You cannot disable or demote your own account');
-          if (isNew) D.users.push(rec); PD.log('User saved', rec.username); PD.save(); PD.toast('User saved', 'ok'); rep.reload();
-        } catch (e) { PD.err(e); return false; }
-      } }] });
-    }
-  }
+  function users(el) { PD.peopleView(el); }
   function log(el) {
     PD.report(el, { id: 'actlog', title: 'Activity log (who did what)', filters: [{ k: 'user', label: 'User', type: 'select', options: function () { return [['', 'All users']].concat(D.users.map(function (u) { return [u.username, u.name]; })); } }, { k: 'from', label: 'From', type: 'date', val: function () { return PD.addDays(PD.today(), -7); } }, { k: 'to', label: 'To', type: 'date', val: PD.today }],
       load: function (f) { return { cols: [{ k: 't', label: 'Time', fmt: function (v) { return PD.fmtDate(v.slice(0, 10)) + ' ' + new Date(v).toTimeString().slice(0, 5); } }, { k: 'user', label: 'User', fmt: function (v) { return '<span class="badge">' + esc(v) + '</span>'; } }, { k: 'action', label: 'Action', fmt: function (v) { return '<b>' + esc(v) + '</b>'; } }, { k: 'ref', label: 'Details' }], rows: D.log.filter(function (l) { var d = l.t.slice(0, 10); return d >= f.from && d <= f.to && (!f.user || l.user === f.user); }).slice().reverse() }; } });

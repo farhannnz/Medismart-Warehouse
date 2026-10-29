@@ -86,7 +86,7 @@ PD.prompt = function (title, label, val) {
 /* ---------- forms ---------- */
 function opts(f) { var o = typeof f.options === 'function' ? f.options() : (f.options || []); return o.map(function (x) { return Array.isArray(x) ? x : [x, x]; }); }
 PD.field = function (f, v) {
-  var id = 'f_' + f.k, val = v == null ? (f.def != null ? f.def : '') : v, a = ' data-k="' + f.k + '"' + (f.req ? ' required' : '') + (f.ph ? ' placeholder="' + esc(f.ph) + '"' : '');
+  var id = 'f_' + f.k, val = v == null ? (f.def != null ? f.def : '') : v, a = ' data-k="' + f.k + '"' + (f.req ? ' required' : '') + (f.readonly ? ' readonly' : '') + (f.ph ? ' placeholder="' + esc(f.ph) + '"' : '');
   var h;
   if (f.type === 'select') h = '<select class="in" id="' + id + '"' + a + '>' + opts(f).map(function (o) { return '<option value="' + esc(o[0]) + '"' + (String(o[0]) === String(val) ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('') + '</select>';
   else if (f.type === 'textarea') h = '<textarea class="in" rows="' + (f.rows || 3) + '" id="' + id + '"' + a + '>' + esc(val) + '</textarea>';

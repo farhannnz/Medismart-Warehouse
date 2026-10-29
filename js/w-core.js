@@ -33,12 +33,25 @@ svc.wParse = function (text) {
   return { serial: svc.wSerial(lot, idx), lot: lot, idx: idx };
 };
 svc.wQR = function (lot, idx) { return svc.wSerial(lot, idx); };   /* the barcode on each strip is just its unique code */
-function ensureShop(name) {
+/* regId = the shop's id on the Shops page (online). Older records are matched by name once and then keep the id. */
+function ensureShop(name, regId) {
   name = String(name || '').trim() || 'Shop';
-  var s = D().shops.find(function (x) { return x.name.toLowerCase() === name.toLowerCase(); });
+  var s = regId ? D().shops.find(function (x) { return x.regId === regId; }) : null;
+  if (!s) s = D().shops.find(function (x) { return (!regId || !x.regId) && x.name.toLowerCase() === name.toLowerCase(); });
   if (!s) { s = { id: PD.uid('sh'), name: name, code: 'S' + (D().shops.length + 1), active: true }; D().shops.push(s); }
+  if (regId && !s.regId) s.regId = regId;
   return s;
 }
+svc.wLinkShops = function (list) {
+  var ch = false;
+  list.forEach(function (r) {
+    var s = D().shops.find(function (x) { return x.regId === r.id; }) || D().shops.find(function (x) { return !x.regId && (x.name.toLowerCase() === String(r.name).toLowerCase() || x.name.toLowerCase() === String(r.oldName || '').toLowerCase()); });
+    if (!s) { s = { id: PD.uid('sh'), name: r.name, code: r.code, active: true }; D().shops.push(s); ch = true; }
+    if (s.regId !== r.id || s.name !== r.name || s.code !== r.code || s.active !== (r.active !== false)) { s.regId = r.id; s.name = r.name; s.code = r.code; s.active = r.active !== false; ch = true; }
+  });
+  if (ch) PD.save();
+};
+svc.wStockValue = function () { var v = 0; D().lots.forEach(function (l) { v += svc.wLeft(l) * (l.cost || 0); }); return PD.r2(v); };
 svc.wShop = function (id) { return D().shops.find(function (s) { return s.id === id; }); };
 svc.wShopName = function (id) { var s = svc.wShop(id); return s ? s.name : '—'; };
 
@@ -52,11 +65,10 @@ svc.wAddStock = function (lines, meta) {
     if (!l.batchNo || !String(l.batchNo).trim()) throw new Error('Batch number is required for ' + it.name);
     if (!l.expiry) throw new Error('Expiry is required for ' + it.name);
     if (PD.num(l.cost) <= 0) throw new Error('Enter the purchase price for ' + it.name);
-    if (PD.num(l.sell) <= 0) throw new Error('Enter the selling price (to the shop) for ' + it.name);
     if (!(PD.num(l.mrp) > 0)) throw new Error('Enter the MRP for ' + it.name);
     if (PD.num(l.strips) !== Math.floor(PD.num(l.strips))) throw new Error('Number of strips must be a whole number (' + it.name + ')');
     var no = svc.nextNo('LOT');
-    var lot = { id: PD.uid('lt'), no: no, itemId: l.itemId, batchNo: String(l.batchNo).trim(), expiry: l.expiry, mrp: PD.num(l.mrp), cost: PD.num(l.cost), sell: PD.num(l.sell), n: PD.num(l.strips), gone: {}, date: meta.date || PD.today(), supplier: meta.supplier || '', bill: meta.bill || '', by: PD.user ? PD.user.name : '' };
+    var lot = { id: PD.uid('lt'), no: no, itemId: l.itemId, batchNo: String(l.batchNo).trim(), expiry: l.expiry, mrp: PD.num(l.mrp), cost: PD.num(l.cost), sell: PD.num(l.sell) > 0 ? PD.num(l.sell) : PD.num(l.cost), n: PD.num(l.strips), gone: {}, date: meta.date || PD.today(), supplier: meta.supplier || '', bill: meta.bill || '', by: PD.user ? PD.user.name : '' };
     D().lots.push(lot); made.push(lot);
   });
   if (!made.length) throw new Error('Add at least one medicine with number of strips');
@@ -91,7 +103,7 @@ svc.wWriteOff = function (lotId, reason) {
 svc.wResolveLines = function (r) { r.lines.forEach(function (l) { if (!l.itemId) { var it = D().items.find(function (i) { return i.name.toLowerCase() === String(l.name || '').toLowerCase(); }); if (it) l.itemId = it.id; } }); };
 svc.wImportRequest = function (f) {
   if (!f || f.type !== 'request' || !Array.isArray(f.lines)) throw new Error('This is not a request file from a shop');
-  var shop = ensureShop(f.shop);
+  var shop = ensureShop(f.shop, f.shopId);
   if (D().wreq.some(function (r) { return r.shopId === shop.id && r.extNo === f.no; })) throw new Error('Request ' + f.no + ' from ' + shop.name + ' is already imported');
   var lines = f.lines.map(function (l) {
     var it = D().items.find(function (i) { return i.name.toLowerCase() === String(l.name || '').toLowerCase(); });
@@ -135,9 +147,9 @@ svc.wDispatch = function (reqId, note) {
   r.picked.forEach(function (s) { var p = svc.wParse(s); var k = p.lot.id; if (!by[k]) { by[k] = { lot: p.lot, serials: [], idx: [] }; order.push(k); } by[k].serials.push(p.serial); by[k].idx.push(p.idx); });
   var no = svc.docNo('WD-', 'WDISP'), taxable = 0, tax = 0, lines = [];
   order.forEach(function (k) {
-    var g = by[k], lot = g.lot, it = svc.item(lot.itemId), amt = PD.r2(g.serials.length * lot.sell);
+    var g = by[k], lot = g.lot, it = svc.item(lot.itemId), amt = PD.r2(g.serials.length * lot.cost);   /* own shops: stock moves at purchase cost */
     taxable += amt; tax += amt * (it.tax || 0) / 100;
-    lines.push({ itemId: it.id, lotId: lot.id, batchNo: lot.batchNo, expiry: lot.expiry, mrp: lot.mrp, rate: lot.sell, qty: g.serials.length, tax: it.tax || 0, serials: g.serials });
+    lines.push({ itemId: it.id, lotId: lot.id, batchNo: lot.batchNo, expiry: lot.expiry, mrp: lot.mrp, rate: lot.cost, qty: g.serials.length, tax: it.tax || 0, serials: g.serials });
     g.idx.forEach(function (i) { lot.gone[i] = { s: 'out', ref: no, shop: shop.name, d: PD.today() }; });
   });
   var d = { id: PD.uid('wd'), no: no, reqId: r.id, reqNo: r.no, extNo: r.extNo, shopId: r.shopId, date: PD.today(), by: PD.user ? PD.user.name : '', note: note || '', lines: lines, serials: r.picked.slice(), taxable: PD.r2(taxable), tax: PD.r2(tax), total: PD.r2(taxable + tax), status: 'Sent' };
@@ -157,7 +169,7 @@ svc.wItemsFile = function () {
 /* ---------- returns from shops ---------- */
 svc.wImportReturn = function (f) {
   if (!f || f.type !== 'return' || !Array.isArray(f.lines)) throw new Error('This is not a return file from a shop');
-  var shop = ensureShop(f.shop);
+  var shop = ensureShop(f.shop, f.shopId);
   if (D().wret.some(function (r) { return r.shopId === shop.id && r.extNo === f.no; })) throw new Error('Return ' + f.no + ' from ' + shop.name + ' is already imported');
   var lines = f.lines.map(function (l) {
     var it = D().items.find(function (i) { return i.name.toLowerCase() === String(l.name || '').toLowerCase(); });

@@ -1,16 +1,76 @@
 rules_version = '2';
-// Medismart: the shop and the warehouse each have one online account.
-// Each app can only read/write its own data; both can use the shared "exchange" link.
+// Medismart: one business, one warehouse, many shops. Every person has their own login.
+//   users/{uid}            profile: app ('warehouse' | 'shop'), role ('Admin' | 'Staff'), shopId, rights, active
+//   shops/{shopId}         a shop made by the warehouse admin; doc = the apps/{doc} holding its data
+//   shops/{shopId}/days/*  daily sales / cost / profit summary the shop publishes (for the warehouse P&L)
+//   apps/warehouse, apps/{shop doc}   the data of the warehouse and of each shop
+//   exchange/{id}          requests, dispatches, returns between the warehouse and the shops (+ the medicine catalog)
+//   config/owner           the first warehouse admin (made once on the setup screen)
 service cloud.firestore {
   match /databases/{database}/documents {
-    function isShop() { return request.auth != null && request.auth.token.email == 'shop@medismart.app'; }
-    function isWarehouse() { return request.auth != null && request.auth.token.email == 'warehouse@medismart.app'; }
+    function signedIn() { return request.auth != null && exists(/databases/$(database)/documents/users/$(request.auth.uid)); }
+    function me() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function active() { return signedIn() && me().active == true; }
+    function isWh() { return active() && me().app == 'warehouse'; }
+    function isOwner() { return isWh() && me().role == 'Admin'; }
+    function isShopUser() { return active() && me().app == 'shop'; }
+    function isShopAdmin() { return isShopUser() && me().role == 'Admin'; }
+    function myShop() { return get(/databases/$(database)/documents/shops/$(me().shopId)).data; }
+    function shopDocOk(doc) { return isShopUser() && myShop().active == true && myShop().doc == doc; }
+    // OLD shared logins, kept only while switching over. After the switch, delete these two accounts in
+    // Firebase Authentication (or remove these two lines and the "legacy" parts below).
+    function legacyShop() { return request.auth != null && request.auth.token.email == 'shop@medismart.app'; }
+    function legacyWh() { return request.auth != null && request.auth.token.email == 'warehouse@medismart.app'; }
 
-    match /apps/shop/{rest=**} { allow read, write: if isShop(); }
-    match /apps/shop { allow read, write: if isShop(); }
-    match /apps/warehouse/{rest=**} { allow read, write: if isWarehouse(); }
-    match /apps/warehouse { allow read, write: if isWarehouse(); }
+    match /config/owner {
+      allow read: if true;
+      allow create: if request.auth != null && !exists(/databases/$(database)/documents/config/owner) && request.resource.data.uid == request.auth.uid;
+    }
 
-    match /exchange/{id} { allow read, write: if isShop() || isWarehouse(); }
+    match /users/{uid} {
+      allow read: if request.auth != null && (request.auth.uid == uid || isOwner()
+        || (isWh() && resource.data.app == 'warehouse')
+        || (isShopUser() && resource.data.shopId == me().shopId));
+      allow create: if
+        // the very first warehouse admin (setup screen)
+        (request.auth != null && request.auth.uid == uid && !exists(/databases/$(database)/documents/config/owner)
+          && request.resource.data.app == 'warehouse' && request.resource.data.role == 'Admin')
+        // the warehouse admin makes anyone
+        || isOwner()
+        // a shop admin makes staff for their own shop
+        || (isShopAdmin() && request.resource.data.app == 'shop' && request.resource.data.shopId == me().shopId && request.resource.data.role == 'Staff');
+      allow update: if isOwner()
+        || (isShopAdmin() && resource.data.shopId == me().shopId && resource.data.role == 'Staff'
+            && request.resource.data.shopId == me().shopId && request.resource.data.role == 'Staff' && request.resource.data.app == 'shop');
+      allow delete: if false;
+    }
+
+    match /shops/{shopId} {
+      allow read: if isWh() || (isShopUser() && me().shopId == shopId);
+      allow write: if isOwner();
+      match /days/{day} {
+        allow read: if isWh() || (isShopUser() && me().shopId == shopId);
+        allow write: if isShopUser() && me().shopId == shopId;
+      }
+    }
+
+    match /apps/{doc} {
+      allow read, write: if (legacyShop() && doc == 'shop') || (legacyWh() && doc == 'warehouse');
+      allow read: if (isWh() && doc == 'warehouse') || isOwner() || shopDocOk(doc);
+      allow write: if (isWh() && doc == 'warehouse') || shopDocOk(doc);
+      match /{rest=**} {
+        allow read, write: if (legacyShop() && doc == 'shop') || (legacyWh() && doc == 'warehouse');
+        allow read: if (isWh() && doc == 'warehouse') || isOwner() || shopDocOk(doc);
+        allow write: if (isWh() && doc == 'warehouse') || shopDocOk(doc);
+      }
+    }
+
+    match /exchange/{id} {
+      allow read, create, update: if legacyShop() || legacyWh();
+      allow read: if isWh() || (isShopUser() && (id == 'catalog' || resource.data.shopId == me().shopId));
+      allow create: if isWh() || (isShopUser() && request.resource.data.shopId == me().shopId);
+      allow update: if isWh() || (isShopUser() && resource.data.shopId == me().shopId && request.resource.data.shopId == me().shopId);
+      allow delete: if false;
+    }
   }
 }

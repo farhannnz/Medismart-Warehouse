@@ -1,4 +1,4 @@
-/* Medismart cloud: Firebase login, Firestore storage and the live shop <-> warehouse link.
+/* Medismart cloud: personal logins (Firebase Auth), Firestore storage, many shops, and the live shop <-> warehouse link.
    Same file in both apps. window.MS_APP = 'shop' | 'warehouse' (set in index.html).
 
    Storage:  apps/{app}                 meta { rev, session, at, keys: { key: chunkCount } }
@@ -9,7 +9,6 @@
 (function () {
 'use strict';
 var PD = window.PD, APP = window.MS_APP || 'shop';
-var EMAIL = { shop: 'shop@medismart.app', warehouse: 'warehouse@medismart.app' }[APP];
 var CHUNK = 240000;                       /* characters per part doc (well under Firestore's 1 MB) */
 var SESSION = Math.random().toString(36).slice(2) + Date.now().toString(36);
 var C = PD.cloud = { app: APP, state: 'idle', rev: 0, dirty: false, last: {}, late: {} };
@@ -21,7 +20,6 @@ function fire() {
   firebase.initializeApp(window.MS_FIREBASE);
   auth = firebase.auth(); db = firebase.firestore();
   db.settings({ ignoreUndefinedProperties: true, merge: true });   /* records carry blank (undefined) fields */
-  metaRef = db.collection('apps').doc(APP);
 }
 
 /* ---------- status shown in the status bar ---------- */
@@ -99,7 +97,7 @@ function push() {
     settled = true; clearTimeout(guard);
     if (token !== pushSeq) { lateLanded(pushId); return; }
     Object.keys(changed).forEach(function (k) { C.last[k] = changed[k]; });
-    C.rev = base + 1; pushing = false; retryMs = 2000; cachePut();
+    C.rev = base + 1; pushing = false; retryMs = 2000; cachePut(); publishDays();
     if (C.dirtyAgain || !sameAsLast()) { C.dirtyAgain = false; schedule(); } else { C.dirty = false; setState('ok'); }
   }).catch(function (e) {
     settled = true; clearTimeout(guard);
@@ -223,50 +221,174 @@ PD.flush = function () { if (!PD.DB) return; cachePut(); if (db) push(); };
 addEventListener('beforeunload', function (e) { if (C.dirty || pushing) { cachePut(); e.preventDefault(); e.returnValue = 'Saving online…'; } });
 addEventListener('online', function () { if (C.dirty) push(); });
 
-/* ---------- login to Firebase (once per computer) ---------- */
-function connectScreen() {
+/* ---------- logins: every person has their own username + password (Firebase Authentication) ----------
+   users/{uid}   { username, name, app: 'shop'|'warehouse', role: 'Admin'|'Staff', shopId, rights, active }
+   shops/{id}    { name, code, doc, active }   doc = the apps/{doc} that holds that shop's data
+   config/owner  { uid }                       the first warehouse admin (made once, on the setup screen) */
+var DOMAIN = 'u.medismart.app';
+C.emailOf = function (u) { return String(u || '').trim().toLowerCase() + '@' + DOMAIN; };
+C.me = null; C.shop = null; C.shopId = ''; C.doc = APP; C.dir = [];
+function nameOk(u) { return /^[a-z0-9][a-z0-9._-]{2,29}$/.test(u); }
+function niceAuth(e) {
+  var c = e && e.code || '';
+  return c === 'auth/invalid-credential' || c === 'auth/wrong-password' || c === 'auth/user-not-found' || c === 'auth/invalid-email' || c === 'auth/invalid-login-credentials' ? 'Wrong username or password.' :
+    c === 'auth/email-already-in-use' ? 'That username is already taken. Choose another.' :
+    c === 'auth/weak-password' ? 'Use at least 6 characters for the password.' :
+    c === 'auth/too-many-requests' ? 'Too many tries. Wait a minute and try again.' :
+    c === 'auth/user-disabled' ? 'This login is switched off.' :
+    c === 'auth/operation-not-allowed' || c === 'auth/configuration-not-found' ? 'Email/Password sign-in is not switched on in Firebase (Authentication → Sign-in method).' :
+    c === 'auth/network-request-failed' ? 'No internet connection.' :
+    c === 'permission-denied' ? 'Not allowed. Check that the new Firestore rules are published (see SETUP.md).' : (e && e.message) || 'Something went wrong';
+}
+function ls(k, v) { try { if (v === undefined) return JSON.parse(localStorage.getItem(k) || 'null'); localStorage.setItem(k, JSON.stringify(v)); } catch (e) { return null; } }
+function offlineErr(e) { return !navigator.onLine || /offline|unavailable|network/i.test(String(e && (e.code || e.message))); }
+function box(inner) { document.body.className = ''; document.body.innerHTML = '<div class="login"><div class="card box"><div class="brand" style="padding:0;color:var(--ink)"><span class="lg">' + PD.icon('pill') + '</span><b>' + (APP === 'shop' ? 'Medismart' : 'Medismart Warehouse') + '</b></div>' + inner + '</div></div>'; }
+var q$ = function (s) { return document.querySelector(s); };
+
+function loginScreen(msg) {
   return new Promise(function (res) {
-    var name = APP === 'shop' ? 'Medismart' : 'Medismart Warehouse';
-    document.body.className = '';
-    document.body.innerHTML = '<div class="login"><div class="card box"><div class="brand" style="padding:0;color:var(--ink)"><span class="lg">' + PD.icon('pill') + '</span><b>' + name + '</b></div><h1>Connect this computer</h1><p class="mut">Enter the ' + (APP === 'shop' ? 'shop' : 'warehouse') + ' online password. You only do this once on each computer.</p><br>' +
-      '<div class="fld"><label>Account</label><input class="in" value="' + EMAIL + '" readonly></div><div class="fld" style="margin-top:12px"><label>Online password</label><input class="in" id="cp" type="password" autocomplete="current-password" autofocus></div>' +
-      '<p id="ce" style="color:var(--bad);min-height:20px;margin:8px 0 0"></p><button class="btn p lg" id="cb" style="width:100%;margin-top:6px">Connect</button>' +
-      '<p class="hint" style="margin-top:14px">First time ever? Type a new password (6+ characters) and click <a href="#" id="cn">Create online account</a>.</p></div></div>';
-    var $ = function (s) { return document.querySelector(s); };
-    function err(e) {
-      var c = e && e.code || '';
-      $('#ce').textContent = c === 'auth/invalid-credential' || c === 'auth/wrong-password' || c === 'auth/user-not-found' ? 'Wrong password (or the online account is not created yet).' :
-        c === 'auth/email-already-in-use' ? 'The online account already exists. Enter its password and click Connect.' :
-        c === 'auth/weak-password' ? 'Use at least 6 characters.' :
-        c === 'auth/operation-not-allowed' || c === 'auth/configuration-not-found' ? 'Email/Password sign-in is not switched on in Firebase (Authentication → Sign-in method).' :
-        c === 'auth/network-request-failed' ? 'No internet connection.' : (e && e.message) || 'Could not connect';
+    box('<h1>Sign in</h1><p class="mut">Use your own username and password. Works on any computer or phone.</p><br>' +
+      '<div class="fld"><label>Username</label><input class="in" id="lu" autocomplete="username" autocapitalize="none" autofocus></div><div class="fld" style="margin-top:12px"><label>Password</label><input class="in" id="lp" type="password" autocomplete="current-password"></div>' +
+      '<p id="le" style="color:var(--bad);min-height:20px;margin:8px 0 0">' + PD.esc(msg || '') + '</p><button class="btn p lg" id="lb" style="width:100%;margin-top:6px">Sign in</button>' +
+      '<p class="hint" style="margin-top:14px">' + (APP === 'shop' ? 'No login yet? The warehouse admin creates the shop admin; the shop admin creates staff logins.' : 'No login yet? Ask the warehouse admin.') + '<span id="su"></span></p>');
+    function go() {
+      var u = q$('#lu').value.trim().toLowerCase(), p = q$('#lp').value;
+      if (!u || !p) { q$('#le').textContent = 'Enter username and password'; return; }
+      q$('#lb').disabled = true; q$('#le').textContent = '';
+      auth.signInWithEmailAndPassword(C.emailOf(u), p).then(function (r) { res(r.user); }).catch(function (e) { q$('#lb').disabled = false; q$('#le').textContent = niceAuth(e); });
     }
-    function go(create) {
-      var p = $('#cp').value; if (!p) { $('#ce').textContent = 'Enter the password'; return; }
-      $('#cb').disabled = true; $('#ce').textContent = '';
-      (create ? auth.createUserWithEmailAndPassword(EMAIL, p) : auth.signInWithEmailAndPassword(EMAIL, p)).then(function (u) { res(u.user); }).catch(function (e) { $('#cb').disabled = false; err(e); });
-    }
-    $('#cb').onclick = function () { go(false); };
-    $('#cp').addEventListener('keydown', function (e) { if (e.key === 'Enter') go(false); });
-    $('#cn').onclick = function (e) { e.preventDefault(); go(true); };
+    q$('#lb').onclick = go; q$('#lp').addEventListener('keydown', function (e) { if (e.key === 'Enter') go(); }); q$('#lu').addEventListener('keydown', function (e) { if (e.key === 'Enter') q$('#lp').focus(); });
+    /* warehouse: the very first admin is made here, once */
+    if (APP === 'warehouse') db.collection('config').doc('owner').get().then(function (s) {
+      if (s.exists) return;
+      q$('#su').innerHTML = ' <br><b>First time?</b> <a href="#" id="sl">Set up the warehouse admin</a>';
+      q$('#sl').onclick = function (e) { e.preventDefault(); setupScreen().then(res); };
+    }).catch(function () {});
+  });
+}
+function setupScreen() {
+  return new Promise(function (res) {
+    box('<h1>Set up the warehouse</h1><p class="mut">This makes the main admin login. Only done once.</p><br>' +
+      '<div class="fld"><label>Warehouse name</label><input class="in" id="fn" autofocus></div>' +
+      '<div class="fld" style="margin-top:12px"><label>Your name</label><input class="in" id="fm"></div>' +
+      '<div class="fld" style="margin-top:12px"><label>Admin username</label><input class="in" id="fu" value="admin" autocapitalize="none"></div>' +
+      '<div class="fld" style="margin-top:12px"><label>Password (6+ characters)</label><input class="in" id="fp" type="password"></div>' +
+      '<div class="fld" style="margin-top:12px"><label>Repeat password</label><input class="in" id="fp2" type="password"></div>' +
+      '<p id="fe" style="color:var(--bad);min-height:20px;margin:8px 0 0"></p><button class="btn p lg" id="fb" style="width:100%;margin-top:6px">Create admin</button>');
+    q$('#fb').onclick = function () {
+      var n = q$('#fn').value.trim(), m = q$('#fm').value.trim() || 'Administrator', u = q$('#fu').value.trim().toLowerCase(), p = q$('#fp').value;
+      if (!n) { q$('#fe').textContent = 'Enter the warehouse name'; return; }
+      if (!nameOk(u)) { q$('#fe').textContent = 'Username: 3-30 small letters / numbers (no spaces)'; return; }
+      if (p.length < 6) { q$('#fe').textContent = 'Password must be at least 6 characters'; return; }
+      if (p !== q$('#fp2').value) { q$('#fe').textContent = 'Passwords do not match'; return; }
+      q$('#fb').disabled = true;
+      auth.createUserWithEmailAndPassword(C.emailOf(u), p).then(function (r) {
+        var uid = r.user.uid, b = db.batch();
+        b.set(db.collection('config').doc('owner'), { uid: uid, at: stamp() });
+        b.set(db.collection('users').doc(uid), { username: u, name: m, app: 'warehouse', role: 'Admin', shopId: '', rights: {}, active: true, at: stamp(), by: 'setup' });
+        return b.commit().then(function () { C.setupName = n; res(r.user); });
+      }).catch(function (e) { q$('#fb').disabled = false; q$('#fe').textContent = niceAuth(e); });
+    };
   });
 }
 function waitAuth() {
   return new Promise(function (res) { var off = auth.onAuthStateChanged(function (u) { off(); res(u); }); });
 }
+function blocked(title, text) { box('<h1>' + title + '</h1><p class="mut">' + text + '</p><br><button class="btn p lg" id="so" style="width:100%">Sign in with another login</button>'); q$('#so').onclick = function () { C.signOut(); }; return new Promise(function () {}); }
 function msgScreen(title, text, retry) {
-  document.body.className = '';
-  document.body.innerHTML = '<div class="login"><div class="card box"><h1>' + title + '</h1><p class="mut">' + text + '</p><br><button class="btn p lg" id="rt" style="width:100%">Try again</button></div></div>';
+  box('<h1>' + title + '</h1><p class="mut">' + text + '</p><br><button class="btn p lg" id="rt" style="width:100%">Try again</button>');
   document.getElementById('rt').onclick = retry || function () { location.reload(); };
 }
-C.signOut = function () { return auth.signOut().then(function () { location.reload(); }); };
+C.signOut = function () { try { localStorage.removeItem('ms_dir_' + APP); } catch (e) {} return auth.signOut().then(function () { location.reload(); }); };
+
+/* who is signed in: their profile, their shop (shop app) and which data doc to open. Cached for offline starts. */
+function loadProfile(u) {
+  var key = 'ms_prof_' + u.uid;
+  return db.collection('users').doc(u.uid).get().then(function (s) {
+    if (!s.exists) return null;
+    var p = s.data(); p.id = u.uid;
+    if (p.active === false || p.app !== APP || p.app !== 'shop' || !p.shopId) return p;
+    return db.collection('shops').doc(p.shopId).get().then(function (sh) { p.shop = sh.exists ? Object.assign({ id: sh.id }, sh.data()) : null; return p; });
+  }).then(function (p) { if (p) ls(key, p); return p; }).catch(function (e) { var c = ls(key); if (c && offlineErr(e)) return c; throw e; });
+}
+function checkProfile(p) {
+  if (!p) return blocked('No access', 'This login has no Medismart profile. Ask the warehouse admin to create your login.');
+  if (p.active === false) return blocked('Login switched off', 'Your login has been switched off by the admin.');
+  if (p.app !== APP) return blocked('Wrong app', 'This is a ' + (p.app === 'shop' ? 'shop' : 'warehouse') + ' login. Open the ' + (p.app === 'shop' ? 'shop (Medismart)' : 'Medismart Warehouse') + ' app to use it.');
+  if (APP === 'shop') {
+    if (!p.shop) return blocked('Shop not found', 'Your shop is not set up yet. Ask the warehouse admin.');
+    if (p.shop.active === false) return blocked('Shop closed', 'This shop has been switched off by the warehouse admin.');
+    C.shop = p.shop; C.shopId = p.shop.id; C.doc = p.shop.doc || ('shop_' + p.shop.id);
+  } else C.doc = 'warehouse';
+  C.me = p; metaRef = db.collection('apps').doc(C.doc); CACHE = 'medismart-cloud-' + C.doc;
+  return Promise.resolve(p);
+}
+/* the people of this shop / of the warehouse (PD.DB.users mirrors it; no passwords are kept in the data) */
+function readDir() {
+  var q = APP === 'shop' ? db.collection('users').where('shopId', '==', C.shopId) : db.collection('users').where('app', '==', 'warehouse');
+  return q.get().then(function (qs) { var a = []; qs.forEach(function (d) { a.push(Object.assign({ id: d.id }, d.data())); }); C.dir = a; ls('ms_dir_' + APP, a); return a; })
+    .catch(function (e) { console.warn('users', e); C.dir = ls('ms_dir_' + APP) || [C.me]; return C.dir; });
+}
+function asUser(p) { return { id: p.id, name: p.name || p.username, username: p.username, role: p.role === 'Admin' ? 'Admin' : 'Staff', rights: p.rights || {}, active: p.active !== false, online: true }; }
+C.syncUsers = function () {
+  var D = PD.DB; if (!D) return;
+  var old = (D.users || []).filter(function (u) { return !u.online && !C.dir.some(function (p) { return p.id === u.id; }); }).map(function (u) { return Object.assign({}, u, { active: false, pass: undefined, old: true }); });
+  if (!C.dir.some(function (p) { return p.id === C.me.id; })) C.dir.push(C.me);
+  D.users = C.dir.map(asUser).concat(old);
+};
+C.refreshUsers = function () { return readDir().then(function () { C.syncUsers(); PD.save(); }); };
+/* first start of a brand-new data doc */
+C.initDB = function (D) {
+  if (APP === 'shop' && C.shop) { D.shop.name = C.shop.name; }
+  if (APP === 'warehouse' && C.setupName) { D.shop.name = C.setupName; D.settings.whName = C.setupName; }
+  D.setupDone = PD.today();
+};
+PD.firstRun = function (done) { C.initDB(PD.DB); PD.save(); done(); };
+
+/* make a login for someone else. A second Firebase app is used so the admin stays signed in. */
+C.createUser = function (o) {
+  var u = String(o.username || '').trim().toLowerCase();
+  if (!nameOk(u)) return Promise.reject(new Error('Username: 3-30 small letters / numbers, no spaces (e.g. ravi or ravi.k)'));
+  if (String(o.password || '').length < 6) return Promise.reject(new Error('Password must be at least 6 characters'));
+  var app2 = firebase.initializeApp(window.MS_FIREBASE, 'mk' + Date.now()), a2 = app2.auth();
+  return a2.setPersistence(firebase.auth.Auth.Persistence.NONE).then(function () { return a2.createUserWithEmailAndPassword(C.emailOf(u), o.password); }).then(function (r) {
+    var uid = r.user.uid;
+    var prof = { username: u, name: o.name || u, app: o.app || APP, role: o.role === 'Admin' ? 'Admin' : 'Staff', shopId: o.shopId || '', rights: o.rights || {}, active: true, at: stamp(), by: C.me ? C.me.username : '' };
+    return a2.signOut().then(function () { return db.collection('users').doc(uid).set(prof); }).then(function () { prof.id = uid; return prof; });
+  }).then(function (p) { app2.delete().catch(function () {}); return p; }, function (e) { app2.delete().catch(function () {}); throw new Error(niceAuth(e)); });
+};
+C.updateUser = function (uid, patch) { return db.collection('users').doc(uid).update(patch).catch(function (e) { throw new Error(niceAuth(e)); }); };
+C.changePassword = function (oldP, newP) {
+  if (String(newP).length < 6) return Promise.reject(new Error('Use at least 6 characters'));
+  var u = auth.currentUser, cred = firebase.auth.EmailAuthProvider.credential(u.email, oldP);
+  return u.reauthenticateWithCredential(cred).then(function () { return u.updatePassword(newP); }).catch(function (e) { throw new Error(niceAuth(e)); });
+};
+/* warehouse admin: shops and every login */
+C.listShops = function () { return db.collection('shops').get().then(function (qs) { var a = []; qs.forEach(function (d) { a.push(Object.assign({ id: d.id }, d.data())); }); a.sort(function (x, y) { return String(x.code).localeCompare(String(y.code), undefined, { numeric: true }); }); C.shops = a; return a; }); };
+C.listAllUsers = function () { return db.collection('users').get().then(function (qs) { var a = []; qs.forEach(function (d) { a.push(Object.assign({ id: d.id }, d.data())); }); return a; }); };
+C.createShop = function (o) {
+  var name = String(o.name || '').trim(); if (!name) return Promise.reject(new Error('Enter the shop name'));
+  return C.listShops().then(function (list) {
+    if (list.some(function (s) { return s.name.toLowerCase() === name.toLowerCase(); })) throw new Error('A shop with this name already exists');
+    if (o.existing && list.some(function (s) { return s.doc === 'shop'; })) throw new Error('The existing shop data is already linked to another shop');
+    var id = 'sh' + Math.random().toString(36).slice(2, 8), rec = { name: name, code: o.code || ('S' + (list.length + 1)), doc: o.existing ? 'shop' : 'shop_' + id, active: true, address: o.address || '', at: stamp(), by: C.me.username };
+    /* the shop that was already running: remember the name it used, so its old requests / returns are matched */
+    var old = o.existing ? db.collection('apps').doc('shop').collection('parts').doc('shop~0').get().then(function (d) { try { rec.oldName = JSON.parse(d.data().d).name || ''; } catch (e) {} }).catch(function () {}) : Promise.resolve();
+    return old.then(function () { return C.createUser({ username: o.username, password: o.password, name: o.adminName, app: 'shop', role: 'Admin', shopId: id, rights: {} }).then(function (adm) {
+      return db.collection('shops').doc(id).set(rec).then(function () { rec.id = id; return { shop: rec, admin: adm }; });
+    }); });
+  }).catch(function (e) { throw e instanceof Error ? e : new Error(niceAuth(e)); });
+};
+C.updateShop = function (id, patch) { return db.collection('shops').doc(id).update(patch).catch(function (e) { throw new Error(niceAuth(e)); }); };
 
 /* PD.load: sign in, then read the DB from Firestore (falls back to the local copy when offline) */
 PD.load = function () {
   try { fire(); } catch (e) { msgScreen('Cannot start', PD.esc(e.message)); return new Promise(function () {}); }
-  return waitAuth().then(function (u) { return u || connectScreen(); }).then(function () {
-    document.body.innerHTML = '<div class="login"><div class="card box"><p class="mut">Loading your data…</p></div></div>';
-    return Promise.all([readCloud(), cacheGet()]);
+  return waitAuth().then(function (u) { return u || loginScreen(); }).then(function (u) {
+    box('<p class="mut">Loading…</p>');
+    return loadProfile(u).catch(function (e) { if (e && e.code === 'permission-denied') return null; throw e; });
+  }).then(checkProfile).then(function () {
+    return Promise.all([readCloud(), cacheGet(), readDir()]);
   }).then(function (x) {
     var r = x[0], cache = x[1];
     if (r) {
@@ -277,8 +399,10 @@ PD.load = function () {
     C.rev = 0; C.last = {}; return null;            /* brand new: the app builds a blank DB and the first save uploads it */
   }).catch(function (e) {
     console.warn('cloud load', e);
-    if (e && e.code === 'permission-denied') { msgScreen('No access', 'This online account is not allowed to open the ' + APP + ' data. Check the Firestore rules (see SETUP.md).', function () { C.signOut(); }); return new Promise(function () {}); }
+    if (e && e.code === 'permission-denied') return blocked('No access', 'This login is not allowed to open the data. Check the Firestore rules (see SETUP.md).');
+    if (!C.me) { msgScreen('No internet', 'Medismart needs the internet to sign in. Connect and try again.'); return new Promise(function () {}); }
     return cacheGet().then(function (cache) {
+      C.dir = ls('ms_dir_' + APP) || [C.me];
       if (cache && cache.db) { C.rev = cache.rev || 0; C.dirty = !!cache.dirty; setTimeout(function () { setState('offline'); }, 50); return cache.db; }
       msgScreen('No internet', 'Medismart needs the internet the first time it opens on this computer. Connect and try again.');
       return new Promise(function () {});
@@ -286,26 +410,34 @@ PD.load = function () {
   });
 };
 
-/* first ever start: name + admin password (replaces the old demo data) */
-PD.firstRun = function (done) {
-  var D = PD.DB, shop = APP === 'shop';
-  document.body.className = '';
-  document.body.innerHTML = '<div class="login"><div class="card box"><div class="brand" style="padding:0;color:var(--ink)"><span class="lg">' + PD.icon('pill') + '</span><b>' + (shop ? 'Medismart' : 'Medismart Warehouse') + '</b></div><h1>Set up</h1><p class="mut">One-time setup. You can change these later in Settings.</p><br>' +
-    '<div class="fld"><label>' + (shop ? 'Shop name' : 'Warehouse name') + '</label><input class="in" id="fn" autofocus></div>' +
-    '<div class="fld" style="margin-top:12px"><label>Admin username</label><input class="in" value="admin" readonly></div>' +
-    '<div class="fld" style="margin-top:12px"><label>Admin password</label><input class="in" id="fp" type="password"></div>' +
-    '<div class="fld" style="margin-top:12px"><label>Repeat password</label><input class="in" id="fp2" type="password"></div>' +
-    '<p id="fe" style="color:var(--bad);min-height:20px;margin:8px 0 0"></p><button class="btn p lg" id="fb" style="width:100%;margin-top:6px">Start</button></div></div>';
-  var $ = function (s) { return document.querySelector(s); };
-  $('#fb').onclick = function () {
-    var n = $('#fn').value.trim(), p = $('#fp').value;
-    if (!n) { $('#fe').textContent = 'Enter the name'; return; }
-    if (p.length < 4) { $('#fe').textContent = 'Password must be at least 4 characters'; return; }
-    if (p !== $('#fp2').value) { $('#fe').textContent = 'Passwords do not match'; return; }
-    D.shop.name = n; if (!shop) D.settings.whName = n;
-    var a = D.users.find(function (u) { return u.username === 'admin'; }); if (a) { a.pass = PD.hash(p); a.name = 'Administrator'; }
-    D.setupDone = PD.today(); PD.save(); done();
-  };
+/* ---------- shop: a small summary per day for the warehouse P&L (shops/{id}/days/{date}) ---------- */
+C.daySummaries = function (D) {
+  var out = {}, accs = {}; (D.accounts || []).forEach(function (a) { accs[a.id] = a; });
+  function day(d) { return out[d] || (out[d] = { date: d, bills: 0, sales: 0, gst: 0, total: 0, cost: 0, returns: 0, retCost: 0, expense: 0, cashSales: 0 }); }
+  (D.sales || []).forEach(function (s) { var x = day(s.date); x.bills++; x.sales += s.taxable || 0; x.gst += s.tax || 0; x.total += s.total || 0; if (s.payMode === 'cash') x.cashSales += s.total || 0; (s.lines || []).forEach(function (l) { x.cost += (l.qty || 0) * (l.cost || 0); }); });
+  var byId = {}; (D.sales || []).forEach(function (s) { byId[s.id] = s; });
+  (D.sreturns || []).forEach(function (r) { var x = day(r.date), b = byId[r.billId]; x.returns += r.taxable || 0; (r.lines || []).forEach(function (l) { var c = l.cost != null ? l.cost : (b && b.lines[l.idx] ? b.lines[l.idx].cost || 0 : 0); x.retCost += (l.qty || 0) * c; }); });
+  (D.vouchers || []).forEach(function (v) { (v.lines || []).forEach(function (l) { var a = accs[l.acc]; if (a && l.acc !== 'roundoff' && (a.group === 'Indirect Expense' || a.group === 'Direct Expense')) day(v.date).expense += (l.dr || 0) - (l.cr || 0); }); });
+  Object.keys(out).forEach(function (d) { var x = out[d]; ['sales', 'gst', 'total', 'cost', 'returns', 'retCost', 'expense', 'cashSales'].forEach(function (k) { x[k] = Math.round(x[k] * 100) / 100; }); x.profit = Math.round((x.sales - x.cost - (x.returns - x.retCost) - x.expense) * 100) / 100; });
+  return out;
+};
+var daySent = null, dayTimer = null;
+function publishDays() {
+  if (APP !== 'shop' || !C.shopId || !PD.DB) return;
+  clearTimeout(dayTimer); dayTimer = setTimeout(function () {
+    var col = db.collection('shops').doc(C.shopId).collection('days');
+    (daySent ? Promise.resolve() : col.get().then(function (qs) { daySent = {}; qs.forEach(function (d) { var x = d.data(); delete x.at; daySent[d.id] = JSON.stringify(x); }); })).then(function () {
+      var all = C.daySummaries(PD.DB), b = db.batch(), n = 0, sent = {};
+      Object.keys(all).forEach(function (d) { var s = JSON.stringify(all[d]); if (daySent[d] !== s && n < 400) { b.set(col.doc(d), Object.assign({ at: stamp() }, all[d])); sent[d] = s; n++; } });
+      if (!n) return;
+      return b.commit().then(function () { Object.keys(sent).forEach(function (d) { daySent[d] = sent[d]; }); if (n >= 400) publishDays(); });
+    }).catch(function (e) { console.warn('day summary', e); });
+  }, 3000);
+}
+C.publishDays = publishDays;
+/* warehouse: read the shops' day summaries */
+C.readDays = function (shopId, from, to) {
+  return db.collection('shops').doc(shopId).collection('days').where('date', '>=', from).where('date', '<=', to).get().then(function (qs) { var a = []; qs.forEach(function (d) { a.push(d.data()); }); return a; });
 };
 
 /* ---------- live updates from other computers (same app) ---------- */
@@ -325,7 +457,7 @@ function stamp() { return firebase.firestore.FieldValue.serverTimestamp(); }
 function clean(x) { return JSON.parse(JSON.stringify(x)); }
 C.send = function (type, to, no, payload, extra) {
   payload = clean(payload);
-  var doc =Object.assign({ type: type, from: APP, to: to, status: 'new', no: no, shop: payload.shop || '', payload: payload, at: stamp(), by: PD.user ? PD.user.name : '' }, extra || {});
+  var doc = Object.assign({ type: type, from: APP, to: to, status: 'new', no: no, shop: payload.shop || '', shopId: APP === 'shop' ? C.shopId : '', payload: payload, at: stamp(), by: PD.user ? PD.user.name : '' }, extra || {});
   return xref().add(doc).catch(function (e) { console.warn('send', e); PD.toast && PD.toast('Could not reach the ' + to + ' (' + (e.message || e) + '). It will be sent when you are online.', 'err'); outbox(doc); });
 };
 /* items that could not be sent are kept in the DB and retried */
@@ -333,7 +465,7 @@ function outbox(doc) { var D = PD.DB; D.outbox = D.outbox || []; doc.at = null; 
 function flushOutbox() {
   var D = PD.DB; if (!D || !D.outbox || !D.outbox.length) return;
   var list = D.outbox.slice(); D.outbox = []; PD.save();
-  list.forEach(function (doc) { doc.at = stamp(); xref().add(doc).catch(function () { outbox(doc); }); });
+  list.forEach(function (doc) { doc.at = stamp(); if (APP === 'shop' && !doc.shopId) doc.shopId = C.shopId; xref().add(doc).catch(function () { outbox(doc); }); });
 }
 /* take one incoming doc: claim it in a transaction so two computers never import it twice */
 function take(snap, fn) {
@@ -353,7 +485,7 @@ function shopLink() {
   /* outgoing: request + return */
   var nr = svc.newRequest; svc.newRequest = function (o) {
     var r = nr.apply(this, arguments), D = PD.DB;
-    C.send('request', 'warehouse', r.no, { type: 'request', shop: D.shop.name, no: r.no, date: r.date, note: r.note, by: r.by, lines: r.lines.map(function (l) {
+    C.send('request', 'warehouse', r.no, { type: 'request', shop: D.shop.name, shopId: C.shopId, no: r.no, date: r.date, note: r.note, by: r.by, lines: r.lines.map(function (l) {
       var it = svc.item(l.itemId), per = it && it.punit === 'Strip' && it.conv > 1 ? it.conv : 1;
       return l.unit === 'sale' && per > 1 ? { name: it.name, qty: Math.ceil(l.qty / per), unit: 'purchase', tabs: l.qty } : { name: svc.itemName(l.itemId), qty: l.qty, unit: 'purchase' };
     }) });
@@ -361,21 +493,20 @@ function shopLink() {
   };
   var cr = svc.cancelRequest; svc.cancelRequest = function (id) {
     var r = PD.DB.requests.find(function (x) { return x.id === id; }); cr.apply(this, arguments);
-    xref().where('type', '==', 'request').where('from', '==', 'shop').where('no', '==', r.no).get().then(function (qs) { qs.forEach(function (d) { if (d.data().shop === PD.DB.shop.name) d.ref.update({ cancelled: true, status: d.data().status === 'new' ? 'cancelled' : d.data().status }); }); });
+    xref().where('shopId', '==', C.shopId).where('type', '==', 'request').where('no', '==', r.no).get().then(function (qs) { qs.forEach(function (d) { if (d.data().from === 'shop') d.ref.update({ cancelled: true, status: d.data().status === 'new' ? 'cancelled' : d.data().status }); }); });
   };
   var sr = svc.sendReturn; svc.sendReturn = function (o) {
     var rec = sr.apply(this, arguments);
-    C.send('return', 'warehouse', rec.no, svc.returnFile(rec));
+    C.send('return', 'warehouse', rec.no, Object.assign(svc.returnFile(rec), { shopId: C.shopId }));
     return rec;
   };
   /* incoming: dispatches for this shop */
-  listen(xref().where('to', '==', 'shop').where('type', '==', 'dispatch').where('status', '==', 'new'), function (d) {
-    var x = d.data(); if (x.shop && x.shop.toLowerCase() !== String(PD.DB.shop.name).toLowerCase()) return;
+  listen(xref().where('shopId', '==', C.shopId).where('to', '==', 'shop').where('type', '==', 'dispatch').where('status', '==', 'new'), function (d) {
     take(d, function (x) { var nd = svc.importDispatch(x.payload); PD.toast && PD.toast('📦 Stock sent by the warehouse: ' + nd.no + '. Open Receive Stock (F4).', 'ok'); refresh(); return nd.no; });
   });
   /* warehouse rejected one of our requests */
-  listen(xref().where('from', '==', 'shop').where('type', '==', 'request').where('status', '==', 'rejected'), function (d) {
-    var x = d.data(), D = PD.DB; if (x.shop && x.shop.toLowerCase() !== String(D.shop.name).toLowerCase()) return;
+  listen(xref().where('shopId', '==', C.shopId).where('from', '==', 'shop').where('type', '==', 'request').where('status', '==', 'rejected'), function (d) {
+    var x = d.data(), D = PD.DB;
     var r = D.requests.find(function (q) { return q.no === x.no; }); if (!r || r.status !== 'Pending') return;
     r.status = 'Rejected'; r.decision = { by: 'Warehouse', date: PD.today(), note: x.reason || '' }; PD.save();
     PD.toast && PD.toast('Warehouse rejected request ' + r.no + (x.reason ? ': ' + x.reason : ''), 'err'); refresh();
@@ -392,7 +523,8 @@ function warehouseLink() {
   var svc = PD.svc;
   var wd = svc.wDispatch; svc.wDispatch = function (reqId) {
     var d = wd.apply(this, arguments);
-    C.send('dispatch', 'shop', d.no, svc.wDispatchFile(d), { shop: svc.wShopName(d.shopId) });
+    var ws = svc.wShop(d.shopId) || {};
+    C.send('dispatch', 'shop', d.no, svc.wDispatchFile(d), { shop: svc.wShopName(d.shopId), shopId: ws.regId || '' });
     return d;
   };
   var rj = svc.wRejectRequest; svc.wRejectRequest = function (id, reason) {
@@ -401,10 +533,10 @@ function warehouseLink() {
   };
   /* incoming: requests and returns from shops */
   listen(xref().where('to', '==', 'warehouse').where('type', '==', 'request').where('status', '==', 'new'), function (d) {
-    take(d, function (x) { var nr = svc.wImportRequest(x.payload); nr.xid = d.id; PD.save(); PD.toast && PD.toast('📨 New request ' + nr.extNo + ' from ' + svc.wShopName(nr.shopId), 'ok'); refresh(); return nr.no; });
+    take(d, function (x) { var nr = svc.wImportRequest(Object.assign({}, x.payload, { shopId: x.shopId || x.payload.shopId || '' })); nr.xid = d.id; PD.save(); PD.toast && PD.toast('📨 New request ' + nr.extNo + ' from ' + svc.wShopName(nr.shopId), 'ok'); refresh(); return nr.no; });
   });
   listen(xref().where('to', '==', 'warehouse').where('type', '==', 'return').where('status', '==', 'new'), function (d) {
-    take(d, function (x) { var nr = svc.wImportReturn(x.payload); PD.toast && PD.toast('↩ Return ' + nr.extNo + ' from ' + svc.wShopName(nr.shopId), 'ok'); refresh(); return nr.no; });
+    take(d, function (x) { var nr = svc.wImportReturn(Object.assign({}, x.payload, { shopId: x.shopId || x.payload.shopId || '' })); PD.toast && PD.toast('↩ Return ' + nr.extNo + ' from ' + svc.wShopName(nr.shopId), 'ok'); refresh(); return nr.no; });
   });
   /* a shop cancelled a pending request */
   listen(xref().where('to', '==', 'warehouse').where('type', '==', 'request').where('cancelled', '==', true), function (d) {
@@ -420,12 +552,22 @@ function warehouseLink() {
   };
   var sm = svc.saveMaster; svc.saveMaster = function (coll) { var r = sm.apply(this, arguments); if (coll === 'items') setTimeout(C.publishCatalog, 300); return r; };
   setTimeout(C.publishCatalog, 1500);
+  /* shops made on the Shops page -> the warehouse's own shop list; old link docs (sent before shop ids) get their shop id */
+  C.syncShops = function () {
+    return C.listShops().then(function (list) {
+      if (svc.wLinkShops) svc.wLinkShops(list);
+      return xref().where('to', '==', 'shop').where('status', '==', 'new').get().then(function (qs) {
+        qs.forEach(function (d) { var x = d.data(); if (x.shopId) return; var s = list.find(function (y) { var n = String(x.shop || '').toLowerCase(); return String(y.name).toLowerCase() === n || String(y.oldName || '').toLowerCase() === n; }); if (s) d.ref.update({ shopId: s.id }).catch(function () {}); });
+      });
+    }).catch(function (e) { console.warn('shops', e); });
+  };
+  setTimeout(C.syncShops, 800);
 }
 
 /* called by the app once PD.DB is ready */
 C.start = function () {
   if (started) return; started = true;
-  watchMeta(); flushOutbox();
+  watchMeta(); flushOutbox(); publishDays();
   if (APP === 'shop') shopLink(); else warehouseLink();
   if (!C.rev) push(); else if (!C.dirty) setState('ok');
 };

@@ -5,7 +5,7 @@ var PD = window.PD, esc = PD.esc, svc = PD.svc, $ = PD.$, $$ = PD.$$;
 
 var NAV = [
   ['Stock', [['wadd', 'Add Stock', 'cart', 'F2'], ['wstock', 'Current Stock', 'box', 'F5'], ['wshelves', 'Shelves', 'box', ''], ['wscan', 'Strip Lookup', 'explore', 'F6']]],
-  ['Shops', [['wreq', 'Shop Requests (scan & dispatch)', 'order', 'F3'], ['wret', 'Returns from Shops', 'ret', 'F4']]],
+  ['Shops', [['wreq', 'Shop Requests (scan & dispatch)', 'order', 'F3'], ['wret', 'Returns from Shops', 'ret', 'F4'], ['wshops', 'Shops & Logins', 'users', ''], ['wpnl', 'Profit & Loss (all shops)', 'report', 'F8']]],
   ['Items', [['itemdlg', 'New / Edit Item', 'pill', '']]],
   ['Insights', [['wrep', 'Reports', 'report', 'F7']]],
   ['Setup', [['attendance', 'Attendance', 'users', ''], ['settings', 'Settings & Staff', 'gear', '']]]
@@ -24,16 +24,19 @@ PD.applyTheme = function () {
   document.documentElement.style.setProperty('--brand-l', 'color-mix(in srgb, ' + a + ' 16%, var(--card))');
 };
 
-/* ---------- boot ---------- */
+/* ---------- boot: the person is already signed in online (cloud.js), so open straight away ---------- */
 function boot() {
   PD.load().then(function (db) {
     var fresh = !(db && db.v);
     PD.DB = fresh ? PD.blank() : db; migrate();
+    if (fresh || !PD.DB.setupDone) PD.cloud.initDB(PD.DB);
+    PD.cloud.syncUsers();
     PD.applyTheme(); PD.cloud.start();
-    if (fresh || !PD.DB.setupDone) { PD.firstRun(function () { loginScreen(); }); return; }
-    var uid = sessionStorage.getItem('wh_user');
-    PD.user = uid ? PD.DB.users.find(function (u) { return u.id === uid && u.active !== false; }) : null;
-    if (PD.user) { shell(); landing(false); } else loginScreen();
+    PD.user = PD.DB.users.find(function (u) { return u.id === PD.cloud.me.id; });
+    var first = !sessionStorage.getItem('wh_in');
+    if (first) { sessionStorage.setItem('wh_in', '1'); PD.log('Signed in'); }
+    if (PD.DB.settings.autoPunch) svc.punchIn(PD.user);
+    PD.save(); shell(); landing(first);
   });
 }
 function migrate() {
@@ -43,31 +46,23 @@ function migrate() {
   svc.currentYear(); D.wSeeded = true;
 }
 
-/* ---------- login ---------- */
-function loginScreen() {
-  document.body.innerHTML = '<div class="login"><div class="card box"><div class="brand" style="padding:0;color:var(--ink)"><span class="lg">' + PD.icon('pill') + '</span><b>Medismart Warehouse</b></div><h1>Welcome back</h1><p class="mut">Sign in to the warehouse.</p><br>' +
-    '<div class="fld"><label>Username</label><input class="in" id="lu" autocomplete="username" autofocus></div><div class="fld" style="margin-top:12px"><label>Password</label><input class="in" id="lp" type="password" autocomplete="current-password"></div>' +
-    '<p id="le" style="color:var(--bad);min-height:20px;margin:8px 0 0"></p><button class="btn p lg" id="lb" style="width:100%;margin-top:6px">Sign in</button>' +
-    '</div></div>';
-  function go() {
-    var u = PD.DB.users.find(function (x) { return x.username.toLowerCase() === $('#lu').value.trim().toLowerCase() && x.active !== false; });
-    if (!u || u.pass !== PD.hash($('#lp').value)) { $('#le').textContent = 'Wrong username or password.'; return; }
-    PD.user = u; sessionStorage.setItem('wh_user', u.id); PD.log('Signed in'); if (PD.DB.settings.autoPunch) svc.punchIn(u); PD.save(); shell(); landing(true);
-  }
-  $('#lb').onclick = go; $('#lp').addEventListener('keydown', function (e) { if (e.key === 'Enter') go(); }); $('#lu').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('#lp').focus(); });
-}
-PD.logout = function () { if (PD.user && PD.DB.settings.autoPunch) svc.punchOut(PD.user); PD.log('Signed out'); PD.save(); sessionStorage.removeItem('wh_user'); PD.user = null; loginScreen(); };
+PD.logout = function () {
+  if (PD.user && PD.DB.settings.autoPunch) svc.punchOut(PD.user); PD.log('Signed out'); PD.save();
+  sessionStorage.removeItem('wh_in'); document.body.innerHTML = '<div class="login"><div class="card box"><p class="mut">Saving and signing out…</p></div></div>';
+  PD.cloud.saveNow().then(function () { PD.cloud.signOut(); });
+};
 
 /* ---------- shell: classic MDI desktop (menu bar, toolbar, window tabs, docked lists, status bar) ---------- */
 var MENUS = [
   ['File', [
-    ['Attendance (Punch In / Out)', 'attendance'], '-', ['Backup && Restore', 'settings', { tab: 'data' }], ['Activity Log', 'settings', { tab: 'log' }], '-', ['Log Out', 'logout'], ['Disconnect this computer', 'disconnect']]],
+    ['Attendance (Punch In / Out)', 'attendance'], '-', ['Backup && Restore', 'settings', { tab: 'data' }], ['Activity Log', 'settings', { tab: 'log' }], '-', ['Change My Password', 'mypass'], ['Log Out', 'logout']]],
   ['Items', [
     ['New / Edit Item', 'itemdlg'], ['Manufacturers', 'masters', { tab: 'mfrs' }]]],
   ['Stock', [
     ['Add Stock (goods received)', 'wadd', null, 'F2'], ['Current Stock', 'wstock', null, 'F5'], ['Shelves', 'wshelves'], ['Strip Lookup (scan)', 'wscan', null, 'F6'], '-',
     ['Lot-wise Stock', 'wrep', { report: 'lots' }], ['Expiry Report', 'wrep', { report: 'expiry' }], ['Low Stock', 'wrep', { report: 'low' }], ['Written-off Stock', 'wrep', { report: 'bad' }]]],
   ['Shops', [
+    ['Shops && Logins', 'wshops'], ['Profit && Loss (all shops)', 'wpnl', null, 'F8'], '-',
     ['Shop Requests (scan & dispatch)', 'wreq', null, 'F3'], ['Dispatch History', 'wreq', { tab: 'hist' }], ['Returns from Shops', 'wret', null, 'F4'], '-',
     ['Shop-wise Summary', 'wrep', { report: 'shopsum' }], ['Requests Register', 'wrep', { report: 'reqs' }], ['Returns Register', 'wrep', { report: 'rets' }]]],
   ['Reports', [
@@ -80,12 +75,12 @@ var MENUS = [
 /* toolbar: [title, icon, action, colour] */
 var TOOLS = [
   ['Add stock (F2)', 'cart', 'wadd', '#2e8b57'], ['Stock (F5)', 'box', 'wstock', '#8a5a2b'], ['Strip lookup (F6)', 'explore', 'wscan', '#7b5ea7'], '|',
-  ['Shop requests (F3)', 'order', 'wreq', '#1e88a8'], ['Returns (F4)', 'ret', 'wret', '#c77d00'], '|',
+  ['Shop requests (F3)', 'order', 'wreq', '#1e88a8'], ['Returns (F4)', 'ret', 'wret', '#c77d00'], ['Profit & Loss (F8)', 'report', 'wpnl', '#2e7d32'], ['Shops & logins', 'users', 'wshops', '#5d4037'], '|',
   ['New / edit item', 'pill', 'itemdlg', '#2f6fb3'], ['Reports (F7)', 'report', 'wrep', '#1e88a8'], '|',
   ['Settings', 'gear', 'settings', '#666'], ['Log out', 'lock', 'logout', '#7a8a2e']
 ];
 var TITLES = {}; NAV.forEach(function (g) { g[1].forEach(function (i) { TITLES[i[0]] = i[1]; }); }); TITLES.home = 'Warehouse'; TITLES.masters = 'Manufacturers'; TITLES.itemsexport = 'Item List for Shops'; TITLES.attendance = 'Attendance'; TITLES.shelves = 'Shelves'; TITLES.itemsimport = 'Import Item List'; TITLES.dnote = 'Delivery Note'; TITLES.batchedit = 'Batch Edit'; TITLES.expclaim = 'ExpiryClaim'; TITLES.itemdlg = 'Item'; TITLES.acctdlg = 'Account Details'; TITLES.request = 'Stock Request'; TITLES.reqlist = 'Request List'; TITLES.receive = 'Receive Stock'; TITLES.attendance = 'Attendance'; TITLES.custhist = 'Customer History';
-var RIGHT = { wadd: 'addstock', wstock: 'stock', wshelves: 'stock', wscan: 'stock', wreq: 'requests', wret: 'returns', wrep: 'reports', itemdlg: 'items', itemsexport: 'items', masters: 'items', settings: 'users' };
+var RIGHT = { wshops: 'shopsadmin', wpnl: 'reports', wadd: 'addstock', wstock: 'stock', wshelves: 'stock', wscan: 'stock', wreq: 'requests', wret: 'returns', wrep: 'reports', itemdlg: 'items', itemsexport: 'items', masters: 'items', settings: 'users' };
 var wins = [], cur = 'home', docks = { items: false, mfrs: false, sups: false, msg: true }, ui = { toolbar: true, status: true };
 PD.go = function (route, arg) { openWin(route, arg); };
 
@@ -114,7 +109,7 @@ function act(a) {
   if (!a) return;
   var m;
   if (a === 'palette') return palette();
-  if (a === 'disconnect') return PD.confirm('Disconnect this computer from the online account? You will need the online password to connect again.', 'Disconnect', true).then(function (ok) { if (ok) { PD.logout(); PD.cloud.signOut(); } });
+  if (a === 'mypass') return PD.changeMyPassword();
   if (a === 'closecur') return cur === 'home' ? 0 : closeWin(cur);
   if (a === 'closeall') { wins = []; cur = 'home'; return renderWin(); }
   if (a === 'closeother') { wins = wins.filter(function (w) { return w.key === cur; }); return renderWin(); }
@@ -152,7 +147,7 @@ function landing(fresh) {
 }
 PD.refreshAlerts = function () { var n = PD.alerts(), b = $('#bell'); if (b) { var hot = n.filter(function (x) { return x.lvl !== 'info'; }).length; b.textContent = '🔔 ' + n.length; b.className = 'bell' + (hot ? ' hot' : ''); } if (docks.msg) fillDock('msg', ''); };
 function tick() { var c = $('#clk'); if (c) { var d = new Date(); c.textContent = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ', ' + d.toLocaleTimeString('en-US'); } }
-var ACTION_RX = /^(dock|toggle|nav|closecur|closeall|closeother|palette|about|home|logout|disconnect)/;
+var ACTION_RX = /^(dock|toggle|nav|closecur|closeall|closeother|palette|about|home|logout|mypass)/;
 function okItem(it) { if (it === '-' || it[0] === '%wins') return true; if (it[4] === 'direct' && !PD.DB.settings.allowDirect) return false; if (ACTION_RX.test(it[1])) return true; return can(it[1]); }
 function menuItems(i) { var a = MENUS[i][1].map(function (it, n) { return { it: it, n: n }; }).filter(function (x) { return okItem(x.it); }), out = []; a.forEach(function (x) { if (x.it === '-' && (!out.length || out[out.length - 1].it === '-')) return; out.push(x); }); while (out.length && out[out.length - 1].it === '-') out.pop(); return out; }
 function drawMenus() {
@@ -172,7 +167,7 @@ function drawMenus() {
   bar.addEventListener('mouseover', function (e) { var mi = e.target.closest('.mi'); if (mi && openI >= 0 && +mi.dataset.i !== openI) show(+mi.dataset.i); });
   document.addEventListener('mousedown', function (e) { if (!e.target.closest || !e.target.closest('#mbar')) show(-1); });
 }
-function runItem(it) { if (/^(dock|toggle|nav|closecur|closeall|closeother|palette|about|disconnect)/.test(it[1])) act(it[1]); else openWin(it[1], it[2] || null); }
+function runItem(it) { if (/^(dock|toggle|nav|closecur|closeall|closeother|palette|about|mypass)/.test(it[1])) act(it[1]); else openWin(it[1], it[2] || null); }
 /* data changed on another computer or arrived from a shop: refresh lists on screen (forms in progress are left alone) */
 PD.onRemote = function () { if (!PD.user || !$('#view')) return; PD.refreshAlerts && PD.refreshAlerts(); if (docks.items) fillDock('items', ''); var w = wins.find(function (x) { return x.key === cur; }); if (!w || /^(wret|wstock|wshelves)$/.test(w.route) || (w.route === 'wreq' && !(PD.DB.wreq.some(function (r) { return r.picked && r.picked.length; })))) renderWin(); };
 function drawDocks() {
