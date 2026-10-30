@@ -284,19 +284,36 @@ PD.expBadge = function (e) {
 };
 PD.monthStart = function () { return PD.today().slice(0, 8) + '01'; };
 PD.itemOptions = function () { return [['', '— select —']].concat(PD.DB.items.filter(function (i) { return i.active !== false; }).map(function (i) { return [i.id, i.name]; })); };
+/* medicine search: the searchable text and the name order are kept in memory and rebuilt only when the data changes */
+var IDX = { db: null, n: -1, ver: -1, rev: -1, list: [] }, saveVer = 0, saveWrapped = null;
+function itemIndex() {
+  if (PD.save !== saveWrapped) { var os = PD.save; saveWrapped = function () { saveVer++; return os.apply(this, arguments); }; PD.save = saveWrapped; }
+  var items = PD.DB.items, rev = PD.cloud ? PD.cloud.rev : 0;
+  if (IDX.db === PD.DB && IDX.n === items.length && IDX.ver === saveVer && IDX.rev === rev) return IDX.list;
+  var list = [];
+  items.forEach(function (it) {
+    if (it.active === false) return;
+    list.push({ it: it, nm: String(it.name || ''), hay: (it.name + ' ' + it.generic + ' ' + it.schedule + ' ' + it.cat + ' ' + svc.mfrName(it.mfrId) + ' ' + it.division).toLowerCase() });
+  });
+  list.sort(function (a, b) { return a.nm < b.nm ? -1 : a.nm > b.nm ? 1 : 0; });
+  IDX.db = PD.DB; IDX.n = items.length; IDX.ver = saveVer; IDX.rev = rev; IDX.list = list; return list;
+}
 PD.itemSource = function (opts) {
   opts = opts || {};
   return function (q) {
-    q = q.trim().toLowerCase(); var stock = svc.stockMap(), out = [];
-    PD.DB.items.forEach(function (it) {
-      if (it.active === false) return; if (opts.filter && !opts.filter(it)) return;
-      var hay = (it.name + ' ' + it.generic + ' ' + it.schedule + ' ' + it.cat + ' ' + svc.mfrName(it.mfrId) + ' ' + it.division).toLowerCase();
-      if (q && !q.split(/\s+/).every(function (w) { return hay.indexOf(w) >= 0; })) return;
-      var st = stock[it.id] || 0;
-      out.push({ id: it.id, item: it, label: '<b>' + esc(it.name) + '</b> ' + PD.schedBadge(it.schedule), sub: esc(it.generic) + ' • ' + esc(svc.mfrName(it.mfrId)) + (it.rack ? ' • Rack ' + esc(it.rack) : ''), right: (opts.stock === false ? '' : 'Stock ' + PD.qty(st) + '<br>' + PD.money(it.mrp)), st: st });
+    var words = q.trim().toLowerCase().split(/\s+/).filter(Boolean), stock = svc.stockMap(), list = itemIndex(), inStock = [], none = [];
+    for (var i = 0; i < list.length && inStock.length < 80; i++) {
+      var e = list[i], it = e.it;
+      if (opts.filter && !opts.filter(it)) continue;
+      if (words.length && !words.every(function (w) { return e.hay.indexOf(w) >= 0; })) continue;
+      if ((stock[it.id] || 0) > 0) inStock.push(e); else if (none.length < 80) none.push(e);
+    }
+    return inStock.concat(none).slice(0, 80).map(function (e) {
+      var it = e.it, st = stock[it.id] || 0;
+      return { id: it.id, item: it, label: '<b>' + esc(it.name) + '</b> ' + PD.schedBadge(it.schedule), sub: esc(it.generic) + ' • ' + esc(svc.mfrName(it.mfrId)) + (it.rack ? ' • Rack ' + esc(it.rack) : ''), right: (opts.stock === false ? '' : 'Stock ' + PD.qty(st) + '<br>' + PD.money(it.mrp)), st: st };
     });
-    out.sort(function (a, b) { return (b.st > 0) - (a.st > 0) || a.item.name.localeCompare(b.item.name); });
-    return out.length > 80 ? out.slice(0, 80) : out;
   };
 };
+/* build the search index once after login, in the background */
+(function warm() { if (PD.DB && PD.DB.items) { try { itemIndex(); } catch (e) {} } else setTimeout(warm, 1500); })();
 })();
