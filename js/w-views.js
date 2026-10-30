@@ -99,7 +99,7 @@ PD.views.wshelves = { render: function (host, arg) {
   function rows() {
     var sm = svc.wStockMap(), ql = $('#sq', host).value.toLowerCase(), fv = $('#sf', host).value;
     var list = d.items.filter(function (i) { return i.active !== false && (!ql || (i.name + ' ' + i.generic).toLowerCase().indexOf(ql) >= 0) && (fv === 'all' || i.rack === fv); }).sort(function (a, b) { return (a.rack || '~').localeCompare(b.rack || '~') || a.name.localeCompare(b.name); });
-    $('#sc', host).textContent = list.length + ' medicines';
+    $('#sc', host).textContent = list.length + ' medicines' + (list.length > 300 ? ' (showing first 300, search to narrow)' : ''); if (list.length > 300) list = list.slice(0, 300);
     $('#sb', host).innerHTML = list.map(function (i) { var ls = svc.wLotsOf(i.id); return '<tr><td><input class="in sm" data-i="' + i.id + '" list="shelfs" value="' + esc(i.rack || '') + '" style="width:110px"></td><td><b>' + esc(i.name) + '</b><br><small class="mut">' + esc(i.generic) + '</small></td><td class="r">' + (sm[i.id] || 0) + '</td><td>' + (ls[0] ? PD.expBadge(ls[0].expiry) : '') + '</td><td class="r"><button class="btn sm" data-sv="' + i.id + '">Save shelf</button></td></tr>'; }).join('') || '<tr><td colspan="5"><div class="empty">Nothing to show.</div></td></tr>';
   }
   rows(); $('#sf', host).onchange = rows; $('#sq', host).oninput = rows;

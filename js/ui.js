@@ -166,7 +166,7 @@ PD.download = function (name, text, type) {
 
 /* ---------- interactive report table ---------- */
 PD.report = function (host, spec) {
-  var S = PD.DB.settings, pref = (S.colsPref[spec.id] = S.colsPref[spec.id] || {}), state = { f: {}, q: '', cf: {}, sort: null, dir: 1, showCF: false, data: null };
+  var S = PD.DB.settings, pref = (S.colsPref[spec.id] = S.colsPref[spec.id] || {}), state = { f: {}, q: '', cf: {}, sort: null, dir: 1, showCF: false, data: null, limit: 200, hc: null, hsig: '', idx: null };
   (spec.filters || []).forEach(function (f) { state.f[f.k] = typeof f.val === 'function' ? f.val() : (f.val == null ? '' : f.val); });
   host.innerHTML = '<div class="card"><div class="hd no-print"><h3 style="padding:0;border:0">' + esc(spec.title) + '</h3><span class="sp"></span><div class="row" id="r-act"></div></div>' +
     '<div class="bd no-print row" id="r-flt"></div><div class="tw"><table class="t"><thead></thead><tbody></tbody><tfoot></tfoot></table></div><div class="hint" id="r-note" style="padding:8px 18px"></div></div>';
@@ -188,26 +188,33 @@ PD.report = function (host, spec) {
     if (m) { var n = parseFloat(String(txt).replace(/[^\d.\-]/g, '')); if (!isFinite(n)) return false; var x = parseFloat(m[2]); return m[1] === '>' ? n > x : m[1] === '<' ? n < x : m[1] === '>=' ? n >= x : n <= x; }
     return String(txt).toLowerCase().indexOf(q.toLowerCase()) >= 0;
   }
-  function draw() {
-    var d = state.data, cols = visibleCols(), rows = d.rows.filter(function (r) {
-      if (state.q) { var all = cols.map(function (c) { return plain(c, r); }).join(' | '); if (!state.q.split(/\s+/).every(function (w) { return match(all, w); })) return false; }
-      return cols.every(function (c) { return !state.cf[c.k] || match(plain(c, r), state.cf[c.k]); });
+  function draw(keepLimit) {
+    if (!keepLimit) state.limit = 200;
+    var d = state.data, cols = visibleCols(), sig = cols.map(function (c) { return c.k; }).join(',');
+    if (!state.hc || state.hsig !== sig) { state.hc = new Map(); state.hsig = sig; }
+    if (!state.idx) { state.idx = new Map(); d.rows.forEach(function (r, i) { state.idx.set(r, i); }); }
+    var words = state.q ? state.q.split(/\s+/) : null, cfk = cols.filter(function (c) { return state.cf[c.k]; });
+    var rows = d.rows.filter(function (r) {
+      if (words) { var all = state.hc.get(r); if (all == null) { all = cols.map(function (c) { return plain(c, r); }).join(' | '); state.hc.set(r, all); } if (!words.every(function (w) { return match(all, w); })) return false; }
+      return cfk.every(function (c) { return match(plain(c, r), state.cf[c.k]); });
     });
-    if (state.sort) { var sc = cols.find(function (c) { return c.k === state.sort; }); if (sc) rows.sort(function (a, b) { var x = sc.raw ? sc.raw(a) : a[sc.k], y = sc.raw ? sc.raw(b) : b[sc.k]; if (typeof x === 'number' && typeof y === 'number') return (x - y) * state.dir; return String(x == null ? '' : x).localeCompare(String(y == null ? '' : y), undefined, { numeric: true }) * state.dir; }); }
+    if (state.sort) { var sc = cols.find(function (c) { return c.k === state.sort; }); if (sc) { var dec = rows.map(function (r) { return { r: r, v: sc.raw ? sc.raw(r) : r[sc.k] }; }); dec.sort(function (a, b) { var x = a.v, y = b.v; if (typeof x === 'number' && typeof y === 'number') return (x - y) * state.dir; return String(x == null ? '' : x).localeCompare(String(y == null ? '' : y), undefined, { numeric: true }) * state.dir; }); rows = dec.map(function (z) { return z.r; }); } }
     PD.$('thead', host).innerHTML = '<tr>' + cols.map(function (c) { return '<th class="sort ' + (c.align === 'r' ? 'r' : '') + '" data-s="' + c.k + '">' + esc(c.label) + (state.sort === c.k ? (state.dir > 0 ? ' ▲' : ' ▼') : '') + '</th>'; }).join('') + '</tr>' +
       (state.showCF ? '<tr>' + cols.map(function (c) { return '<th><input class="in sm" data-cf="' + c.k + '" value="' + esc(state.cf[c.k] || '') + '" placeholder="filter" style="min-width:60px"></th>'; }).join('') + '</tr>' : '');
-    PD.$('tbody', host).innerHTML = rows.length ? rows.map(function (r, i) {
-      return '<tr class="' + (spec.drill ? 'click ' : '') + (spec.rowClass ? spec.rowClass(r) : '') + '" data-i="' + d.rows.indexOf(r) + '"' + (spec.rowStyle ? ' style="' + spec.rowStyle(r) + '"' : '') + '>' + cols.map(function (c) { return '<td class="' + (c.align === 'r' ? 'r' : c.align === 'c' ? 'c' : '') + '">' + cell(c, r) + '</td>'; }).join('') + '</tr>';
-    }).join('') : '<tr><td colspan="' + cols.length + '"><div class="empty">No records found for these filters.</div></td></tr>';
+    var shownRows = rows.length > state.limit ? rows.slice(0, state.limit) : rows;
+    PD.$('tbody', host).innerHTML = rows.length ? shownRows.map(function (r, i) {
+      return '<tr class="' + (spec.drill ? 'click ' : '') + (spec.rowClass ? spec.rowClass(r) : '') + '" data-i="' + state.idx.get(r) + '"' + (spec.rowStyle ? ' style="' + spec.rowStyle(r) + '"' : '') + '>' + cols.map(function (c) { return '<td class="' + (c.align === 'r' ? 'r' : c.align === 'c' ? 'c' : '') + '">' + cell(c, r) + '</td>'; }).join('') + '</tr>';
+    }).join('') + (rows.length > state.limit ? '<tr><td colspan="' + cols.length + '" style="text-align:center;padding:10px">Showing ' + state.limit + ' of ' + rows.length + ' rows &nbsp; <button class="btn sm" data-more="500">Show 500 more</button> <button class="btn sm" data-more="all">Show all</button></td></tr>' : '') : '<tr><td colspan="' + cols.length + '"><div class="empty">No records found for these filters.</div></td></tr>';
     var sums = cols.some(function (c) { return c.sum; });
     PD.$('tfoot', host).innerHTML = sums && rows.length ? '<tr>' + cols.map(function (c, i) { if (!c.sum) return '<td>' + (i === 0 ? 'Total (' + rows.length + ')' : '') + '</td>'; var t = 0; rows.forEach(function (r) { t += PD.num(c.raw ? c.raw(r) : r[c.k]); }); return '<td class="r">' + (c.fmtSum ? c.fmtSum(t) : PD.n2(t)) + '</td>'; }).join('') + '</tr>' : '';
     PD.$('#r-note', host).textContent = (d.note || '') + (rows.length !== d.rows.length ? '  Showing ' + rows.length + ' of ' + d.rows.length + ' rows.' : '');
     state.shown = rows; state.cols = cols;
   }
-  function run() { try { state.data = spec.load(state.f); } catch (e) { PD.err(e); state.data = { cols: [], rows: [] }; } draw(); }
+  function run() { state.hc = null; state.idx = null; try { state.data = spec.load(state.f); } catch (e) { PD.err(e); state.data = { cols: [], rows: [] }; } draw(); }
   PD.on(flt, 'input', '[data-f]', function (e, t) { state.f[t.dataset.f] = t.value; run(); });
   PD.on(flt, 'change', '[data-f]', function (e, t) { state.f[t.dataset.f] = t.value; run(); });
-  PD.$('#r-q', host).addEventListener('input', function () { state.q = this.value; draw(); });
+  var qTimer; PD.$('#r-q', host).addEventListener('input', function () { var v = this.value; clearTimeout(qTimer); qTimer = setTimeout(function () { state.q = v; draw(); }, 180); });
+  PD.on(host, 'click', '[data-more]', function (e, t) { state.limit = t.dataset.more === 'all' ? 1e9 : state.limit + 500; draw(true); });
   PD.on(host, 'click', 'th[data-s]', function (e, t) { var k = t.dataset.s; if (state.sort === k) state.dir = -state.dir; else { state.sort = k; state.dir = 1; } draw(); });
   PD.on(host, 'input', '[data-cf]', function (e, t) { state.cf[t.dataset.cf] = t.value; var pos = t.selectionStart, k = t.dataset.cf; draw(); var n = PD.$('[data-cf="' + k + '"]', host); if (n) { n.focus(); n.setSelectionRange(pos, pos); } });
   PD.on(host, 'click', 'tbody tr[data-i]', function (e, t) { if (spec.drill && !e.target.closest('a,button,input')) spec.drill(state.data.rows[+t.dataset.i], run); });
@@ -289,7 +296,7 @@ PD.itemSource = function (opts) {
       out.push({ id: it.id, item: it, label: '<b>' + esc(it.name) + '</b> ' + PD.schedBadge(it.schedule), sub: esc(it.generic) + ' • ' + esc(svc.mfrName(it.mfrId)) + (it.rack ? ' • Rack ' + esc(it.rack) : ''), right: (opts.stock === false ? '' : 'Stock ' + PD.qty(st) + '<br>' + PD.money(it.mrp)), st: st });
     });
     out.sort(function (a, b) { return (b.st > 0) - (a.st > 0) || a.item.name.localeCompare(b.item.name); });
-    return out;
+    return out.length > 80 ? out.slice(0, 80) : out;
   };
 };
 })();
