@@ -116,6 +116,30 @@ svc.wLinkCode = function (itemId, code) {
   it.barcode = (it.barcode ? it.barcode + ', ' : '') + String(code).trim(); PD.log('Barcode linked', it.name + ' ← ' + code); PD.save(); return it;
 };
 
+
+/* ---------- bulk import (item list + opening lots from a prepared file) ---------- */
+svc.wImportStock = function (rows) {
+  var mf = {}, made = 0, strips = 0;
+  D().mfrs.forEach(function (m) { mf[m.name.toLowerCase()] = m; });
+  var byName = {}; D().items.forEach(function (i) { byName[i.name.toLowerCase()] = i; });
+  rows.forEach(function (r) {
+    var name = String(r.name || '').trim(); if (!name) return;
+    var m = null, mn = String(r.mfr || '').trim();
+    if (mn) { m = mf[mn.toLowerCase()]; if (!m) { m = { id: PD.uid('mf'), name: mn, active: true }; D().mfrs.push(m); mf[mn.toLowerCase()] = m; } }
+    var it = byName[name.toLowerCase()];
+    if (!it) {
+      it = { id: PD.uid('it'), name: name, generic: '', cat: 'Allopathy', schedule: '', mfrId: m ? m.id : '', division: '', rack: r.rack || '', hsn: '', tax: 0, mrp: PD.num(r.mrp), margin: 20, reorder: 10, unit: r.unit || 'Strip', punit: 'Box', conv: PD.num(r.conv) > 0 ? PD.num(r.conv) : 1, batch: true, active: true };
+      D().items.push(it); byName[name.toLowerCase()] = it;
+    } else if (!it.rack && r.rack) it.rack = r.rack;
+    if (PD.num(r.strips) > 0) {
+      D().lots.push({ id: PD.uid('lt'), no: svc.nextNo('LOT'), itemId: it.id, batchNo: r.batchNo || 'OPEN', expiry: r.expiry || '2027-12', mrp: PD.num(r.mrp), cost: PD.num(r.cost), sell: PD.num(r.sell) > 0 ? PD.num(r.sell) : PD.num(r.cost), n: Math.floor(PD.num(r.strips)), gone: {}, date: PD.today(), supplier: '', bill: 'IMPORT', by: PD.user ? PD.user.name : '' });
+      strips += Math.floor(PD.num(r.strips));
+    }
+    made++;
+  });
+  PD.log('Stock imported', made + ' items, ' + strips + ' strips'); PD.save(); return { items: made, strips: strips };
+};
+
 /* ---------- add stock ---------- */
 svc.wAddStock = function (lines, meta) {
   meta = meta || {}; var made = [];
@@ -199,6 +223,21 @@ svc.wPickScan = function (reqId, text) {
   var warn = ''; var earlier = svc.wLotsOf(p.lot.itemId).filter(function (l) { return (l.expiry || '9999') < (p.lot.expiry || '9999'); });
   if (earlier.length) warn = 'Note: lot ' + earlier[0].no + ' of ' + svc.itemName(p.lot.itemId) + ' expires earlier (' + PD.fmtExp(earlier[0].expiry) + '). Send that first if you can.';
   PD.save(); return { ok: true, msg: svc.itemName(p.lot.itemId) + ' • ' + p.serial + ' • exp ' + PD.fmtExp(p.lot.expiry) + ' (' + (have + 1) + '/' + want + ')', warn: warn };
+};
+/* pick strips without scanning: take the next free strips of a chosen lot */
+svc.wPickLot = function (reqId, lotId, qty) {
+  var r = D().wreq.find(function (x) { return x.id === reqId; }); if (!r) throw new Error('Open a request first');
+  if (r.status !== 'Pending' && r.status !== 'Partly dispatched') throw new Error('This request is ' + r.status);
+  var lot = D().lots.find(function (l) { return l.id === lotId; }); if (!lot) throw new Error('Batch not found');
+  svc.wResolveLines(r);
+  var want = r.lines.filter(function (l) { return l.itemId === lot.itemId; }).reduce(function (a, l) { return a + l.qtyS; }, 0);
+  if (!want) throw new Error(svc.itemName(lot.itemId) + ' was not asked for in this request');
+  var need = want - svc.wPickedCount(r, lot.itemId) - svc.wDoneCount(r, lot.itemId); qty = Math.floor(PD.num(qty));
+  if (!(qty > 0)) throw new Error('Enter how many strips'); if (qty > need) throw new Error('Only ' + need + ' more strips of ' + svc.itemName(lot.itemId) + ' are needed');
+  var n = 0;
+  for (var i = 1; i <= lot.n && n < qty; i++) { if (lot.gone[i]) continue; var sr = svc.wSerial(lot, i); if (r.picked.indexOf(sr) >= 0) continue; r.picked.push(sr); n++; }
+  if (n < qty) throw new Error('Batch ' + lot.batchNo + ' has only ' + n + ' free strips');
+  PD.save(); return n;
 };
 svc.wPickRemove = function (reqId, serial) { var r = D().wreq.find(function (x) { return x.id === reqId; }); if (!r) return; r.picked = r.picked.filter(function (s) { return s !== serial; }); PD.save(); };
 svc.wDispatch = function (reqId, note) {
