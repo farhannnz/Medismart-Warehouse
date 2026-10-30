@@ -7,12 +7,12 @@
 var PD = window.PD, svc = PD.svc;
 function D() { return PD.DB; }
 
-PD.RIGHTS = [['items', 'Create & edit items'], ['addstock', 'Add stock (goods received)'], ['stock', 'Stock, shelves & strip lookup'], ['requests', 'Shop requests, scan & dispatch'], ['returns', 'Returns from shops'], ['reports', 'Reports'], ['users', 'Staff, options & backup'], ['attendance', 'Attendance register (see everyone)']];
+PD.RIGHTS = [['items', 'Create & edit items'], ['addstock', 'Add stock (goods received)'], ['stock', 'Stock, shelves & strip lookup'], ['requests', 'Shop requests, scan & dispatch'], ['returns', 'Returns from shops'], ['reports', 'Reports'], ['accounts', 'Accounts (vouchers, ledger, P&L, balance sheet)'], ['users', 'Staff, options & backup'], ['attendance', 'Attendance register (see everyone)']];
 
 var ob = PD.blank;
 PD.blank = function () {
   var b = ob();
-  b.lots = []; b.shops = []; b.wreq = []; b.wdisp = []; b.wret = []; b.attendance = b.attendance || [];
+  b.lots = []; b.shops = []; b.wreq = []; b.wdisp = []; b.wret = []; b.wpay = []; b.attendance = b.attendance || [];
   b.settings.whName = 'Main Warehouse'; b.settings.expiryDays = 120; b.settings.autoPunch = true; b.settings.shiftStart = '09:00'; b.settings.graceMin = 15;
   return b;
 };
@@ -54,6 +54,67 @@ svc.wLinkShops = function (list) {
 svc.wStockValue = function () { var v = 0; D().lots.forEach(function (l) { v += svc.wLeft(l) * (l.cost || 0); }); return PD.r2(v); };
 svc.wShop = function (id) { return D().shops.find(function (s) { return s.id === id; }); };
 svc.wShopName = function (id) { var s = svc.wShop(id); return s ? s.name : '—'; };
+
+/* ---------- shop accounts: each dispatch is a BILL to the shop at the warehouse's price (no GST).
+   Accepted returns (of billed stock) and payments received reduce what the shop owes. ---------- */
+svc.wPays = function () { if (!D().wpay) D().wpay = []; return D().wpay; };
+svc.wDue = function (shopId) { var l = svc.wLedger(shopId); return l.length ? l[l.length - 1].bal : 0; };
+svc.wReceivePay = function (o) {
+  var s = svc.wShop(o.shopId); if (!s) throw new Error('Choose the shop');
+  var amt = PD.r2(PD.num(o.amount)); if (!(amt > 0)) throw new Error('Enter the amount received');
+  var p = { id: PD.uid('wp'), no: svc.docNo('RCPT-', 'WPAY'), shopId: s.id, date: o.date || PD.today(), amount: amt, mode: o.mode || 'Cash', note: String(o.note || '').trim(), by: PD.user ? PD.user.name : '' };
+  svc.wPays().push(p); PD.log('Payment received ' + p.no, s.name + ' ' + PD.n2(amt) + ' ' + p.mode); PD.save(); return p;
+};
+/* the warehouse's own margin on bills to shops, for the Profit & Loss page */
+function lotOfLine(l) {
+  var p = (l.serials || []).map(svc.wParse).find(function (x) { return x && x.lot; });
+  return p ? p.lot : D().lots.find(function (lt) { return lt.itemId === l.itemId && lt.batchNo === l.batchNo; });
+}
+svc.wMargin = function (from, to) {
+  var r = { bills: 0, sales: 0, cost: 0, returns: 0, retCost: 0 };
+  D().wdisp.forEach(function (x) { if (!x.bill || x.date < from || x.date > to) return; r.bills++; x.lines.forEach(function (l) { r.sales += l.qty * l.rate; r.cost += l.qty * (l.cost || 0); }); });
+  D().wret.forEach(function (x) {
+    var d = x.doneOn || x.date; if (x.status !== 'Accepted' || d < from || d > to) return;
+    x.lines.forEach(function (l) { if (!l.credit) return; r.returns += l.qty * l.rate; if (l.outcome === 'stock') { var lot = lotOfLine(l); r.retCost += l.qty * (lot ? lot.cost : l.rate); } });
+  });
+  Object.keys(r).forEach(function (k) { r[k] = PD.r2(r[k]); });
+  r.gross = PD.r2(r.sales - r.returns - (r.cost - r.retCost)); return r;
+};
+
+/* ---------- company barcodes on the medicine box / strip ----------
+   A plain EAN / UPC number identifies the medicine. A GS1 code (2D QR / DataMatrix, or GS1-128) also carries
+   the batch (AI 10) and expiry (AI 17), so those fill in by themselves. Each item keeps its codes in item.barcode (comma separated). */
+function ymExp(s) { return /^\d{6}$/.test(s) ? '20' + s.slice(0, 2) + '-' + s.slice(2, 4) : ''; }
+svc.wCodeKey = function (c) { c = String(c || '').trim(); return /^\d+$/.test(c) ? c.replace(/^0+/, '') : c.toUpperCase(); };
+svc.wReadCode = function (text) {
+  var raw = String(text || '').replace(/^\][A-Za-z]\d/, '').trim(); if (!raw) return null;
+  var out = { raw: raw, code: '', batch: '', expiry: '' }, GS = '\x1d';
+  var dl = /\/01\/(\d{14})(?:\/10\/([^/?#]+))?/.exec(raw);   /* GS1 web link: https://.../01/<gtin>/10/<batch>?17=<yymmdd> */
+  if (dl) { out.code = dl[1]; out.batch = dl[2] ? decodeURIComponent(dl[2]) : ''; var ex = /[?&]17=(\d{6})/.exec(raw); if (ex) out.expiry = ymExp(ex[1]); return out; }
+  var s = raw.replace(/\((\d{2,4})\)/g, GS + '$1').replace(/^\x1d/, '');   /* "(01)...(17)...(10)..." -> GS separated */
+  if (/^01\d{14}/.test(s)) {
+    var i = 0;
+    while (i < s.length) {
+      if (s[i] === GS || s[i] === ' ') { i++; continue; }
+      var ai = s.substr(i, 2);
+      if (ai === '01' || ai === '02') { if (!out.code) out.code = s.substr(i + 2, 14); i += 16; }
+      else if (ai === '11' || ai === '13' || ai === '15' || ai === '17') { if (ai === '17') out.expiry = ymExp(s.substr(i + 2, 6)); i += 8; }
+      else { var j = s.indexOf(GS, i + 2); if (j < 0) j = s.length; if (ai === '10') out.batch = s.slice(i + 2, j).trim(); i = j; }
+    }
+    return out;
+  }
+  out.code = raw; return out;
+};
+svc.wItemByCode = function (code) {
+  var k = svc.wCodeKey(code); if (!k) return null;
+  return D().items.find(function (it) { return it.active !== false && String(it.barcode || '').split(/[,\s]+/).some(function (x) { return x && svc.wCodeKey(x) === k; }); }) || null;
+};
+svc.wLinkCode = function (itemId, code) {
+  var it = svc.item(itemId); if (!it) throw new Error('Item not found');
+  var other = svc.wItemByCode(code); if (other && other.id !== it.id) throw new Error('This barcode is already linked to ' + other.name);
+  if (other) return it;
+  it.barcode = (it.barcode ? it.barcode + ', ' : '') + String(code).trim(); PD.log('Barcode linked', it.name + ' ← ' + code); PD.save(); return it;
+};
 
 /* ---------- add stock ---------- */
 svc.wAddStock = function (lines, meta) {
@@ -147,19 +208,19 @@ svc.wDispatch = function (reqId, note) {
   r.picked.forEach(function (s) { var p = svc.wParse(s); var k = p.lot.id; if (!by[k]) { by[k] = { lot: p.lot, serials: [], idx: [] }; order.push(k); } by[k].serials.push(p.serial); by[k].idx.push(p.idx); });
   var no = svc.docNo('WD-', 'WDISP'), taxable = 0, tax = 0, lines = [];
   order.forEach(function (k) {
-    var g = by[k], lot = g.lot, it = svc.item(lot.itemId), amt = PD.r2(g.serials.length * lot.cost);   /* own shops: stock moves at purchase cost */
-    taxable += amt; tax += amt * (it.tax || 0) / 100;
-    lines.push({ itemId: it.id, lotId: lot.id, batchNo: lot.batchNo, expiry: lot.expiry, mrp: lot.mrp, rate: lot.cost, qty: g.serials.length, tax: it.tax || 0, serials: g.serials });
+    var g = by[k], lot = g.lot, it = svc.item(lot.itemId), rate = PD.num(lot.sell) > 0 ? PD.num(lot.sell) : PD.num(lot.cost), amt = PD.r2(g.serials.length * rate);   /* billed to the shop at the warehouse's price to shops, no GST */
+    taxable += amt;
+    lines.push({ itemId: it.id, lotId: lot.id, batchNo: lot.batchNo, expiry: lot.expiry, mrp: lot.mrp, rate: rate, cost: lot.cost, qty: g.serials.length, tax: it.tax || 0, serials: g.serials });   /* tax = the medicine's GST for the shop's own sales; nothing is charged on this bill */
     g.idx.forEach(function (i) { lot.gone[i] = { s: 'out', ref: no, shop: shop.name, d: PD.today() }; });
   });
-  var d = { id: PD.uid('wd'), no: no, reqId: r.id, reqNo: r.no, extNo: r.extNo, shopId: r.shopId, date: PD.today(), by: PD.user ? PD.user.name : '', note: note || '', lines: lines, serials: r.picked.slice(), taxable: PD.r2(taxable), tax: PD.r2(tax), total: PD.r2(taxable + tax), status: 'Sent' };
+  var d = { id: PD.uid('wd'), no: no, reqId: r.id, reqNo: r.no, extNo: r.extNo, shopId: r.shopId, date: PD.today(), by: PD.user ? PD.user.name : '', note: note || '', lines: lines, serials: r.picked.slice(), taxable: PD.r2(taxable), tax: PD.r2(tax), total: PD.r2(taxable + tax), status: 'Sent', bill: true };
   D().wdisp.push(d); r.dispIds.push(d.id); r.picked = [];
   svc.wResolveLines(r); var full = r.lines.every(function (l) { return !l.itemId || svc.wDoneCount(r, l.itemId) >= r.lines.filter(function (x) { return x.itemId === l.itemId; }).reduce(function (a, x) { return a + x.qtyS; }, 0); });
   r.status = full ? 'Dispatched' : 'Partly dispatched';
   PD.log('Dispatched ' + no, shop.name + ' ' + PD.n2(d.total)); PD.save(); return d;
 };
 svc.wDispatchFile = function (d) {
-  return { type: 'dispatch', v: 2, warehouse: D().settings.whName, no: d.no, date: d.date, requestNo: d.extNo, by: d.by, note: d.note,
+  return { type: 'dispatch', v: 3, bill: !!d.bill, warehouse: D().settings.whName, no: d.no, date: d.date, requestNo: d.extNo, by: d.by, note: d.note,
     lines: d.lines.map(function (l, i) { var it = svc.item(l.itemId); return { name: it.name, generic: it.generic, cat: it.cat, schedule: it.schedule, mfr: svc.mfrName(it.mfrId), unit: it.unit, punit: it.punit, conv: it.conv, per: it.per || 1, sunit: it.sunit || 'Tab', hsn: it.hsn, tax: l.tax, reqIdx: i, batchNo: l.batchNo, expiry: l.expiry, mrp: l.mrp, rate: l.rate, qty: l.qty, serials: l.serials }; }) };
 };
 svc.wItemsFile = function () {
@@ -173,9 +234,10 @@ svc.wImportReturn = function (f) {
   if (D().wret.some(function (r) { return r.shopId === shop.id && r.extNo === f.no; })) throw new Error('Return ' + f.no + ' from ' + shop.name + ' is already imported');
   var lines = f.lines.map(function (l) {
     var it = D().items.find(function (i) { return i.name.toLowerCase() === String(l.name || '').toLowerCase(); });
-    return { name: l.name, itemId: it ? it.id : '', batchNo: l.batchNo, expiry: l.expiry, mrp: PD.num(l.mrp), rate: PD.num(l.rate), qty: PD.num(l.qty), reason: l.reason || '', note: l.note || '', serials: l.serials || [], outcome: /expired|damag/i.test(l.reason || '') ? 'bad' : 'stock' };
+    return { name: l.name, itemId: it ? it.id : '', batchNo: l.batchNo, expiry: l.expiry, mrp: PD.num(l.mrp), rate: PD.num(l.rate), qty: PD.num(l.qty), reason: l.reason || '', note: l.note || '', serials: l.serials || [], credit: !!l.credit, outcome: /expired|damag/i.test(l.reason || '') ? 'bad' : 'stock' };
   });
-  var rec = { id: PD.uid('wt'), no: svc.docNo('RET-', 'WRET'), extNo: f.no, shopId: shop.id, date: f.date || PD.today(), note: f.note || '', lines: lines, status: 'Pending', value: PD.r2(lines.reduce(function (a, l) { return a + l.qty * l.rate; }, 0)) };
+  var rec = { id: PD.uid('wt'), no: svc.docNo('RET-', 'WRET'), extNo: f.no, shopId: shop.id, date: f.date || PD.today(), note: f.note || '', lines: lines, status: 'Pending', value: PD.r2(lines.reduce(function (a, l) { return a + l.qty * l.rate; }, 0)),
+    credit: PD.r2(lines.reduce(function (a, l) { return a + (l.credit ? l.qty * l.rate : 0); }, 0)) };   /* billed stock coming back: reduces what the shop owes once accepted */
   D().wret.push(rec); PD.log('Return imported ' + rec.no, shop.name); PD.save(); return rec;
 };
 svc.wAcceptReturn = function (id, outcomes) {
@@ -236,9 +298,93 @@ svc.wSeed = function () {
   });
   var exp = { itemId: d.items[5].id, batchNo: 'OLD77', expiry: expIn(-2), strips: 9, cost: PD.r2(d.items[5].mrp * .6), sell: PD.r2(d.items[5].mrp * .7), mrp: d.items[5].mrp };
   lines.push(exp);
-  svc.wAddStock(lines, { supplier: 'Demo Pharma Distributors', bill: 'INV-DEMO-1' });
+  svc.wAddStock(lines, { supplier: 'Demo Pharma Distributors', bill: 'INV-DEMO-1', pay: 'credit' });
   svc.wImportRequest({ type: 'request', shop: 'Sunrise Pharmacy (demo)', no: 'RQ-000001', date: PD.today(), note: 'Weekly refill', lines: [{ name: d.items[0].name, qty: 2, unit: 'purchase' }, { name: d.items[1].name, qty: 1, unit: 'purchase' }, { name: d.items[2].name, qty: 15, unit: 'sale' }] });
   svc.wImportRequest({ type: 'request', shop: 'City Medico (demo)', no: 'RQ-000007', date: PD.today(), note: 'Urgent', lines: [{ name: d.items[3].name, qty: 1, unit: 'purchase' }, { name: d.items[8].name, qty: 20, unit: 'sale' }] });
   PD.user = u0; PD.save();
+};
+
+/* ---------- accounts: every warehouse entry also posts a voucher (double entry) ----------
+   Add Stock = purchase (supplier on credit, or paid cash / bank). Bill to a shop = sale (each shop is a customer / debtor).
+   Accepted return of billed stock = sales return. Payment from a shop = receipt. Closing stock = strips left x purchase price.
+   Written-off strips simply leave the stock, so their cost shows up as a lower closing stock (a loss). */
+svc.stockValue = function () { return svc.wStockValue(); };
+svc.wShopCus = function (shopId) {
+  var s = svc.wShop(shopId), c = svc.customer(shopId), nm = s ? s.name : shopId;
+  if (!c) { c = { id: shopId, name: nm, phone: '', active: true, isShop: true }; D().customers.push(c); } else if (c.name !== nm) c.name = nm;
+  var acc = svc.partyAcc('cus', shopId), a = svc.acc(acc); if (a.name !== nm) a.name = nm;
+  return acc;
+};
+svc.wSupplierId = function (name) {
+  name = String(name || '').trim(); if (!name) return '';
+  var s = D().suppliers.find(function (x) { return x.name.toLowerCase() === name.toLowerCase(); });
+  if (!s) { s = { id: PD.uid('s'), name: name, phone: '', active: true, links: { mfrs: [], items: [] } }; D().suppliers.push(s); }
+  svc.partyAcc('sup', s.id); return s.id;
+};
+function payAcc(mode) { return /cash/i.test(mode || '') ? 'cash' : 'bank'; }
+function openYear(date) { var y = svc.yearOf(date || PD.today()); if (y.closed) throw new Error('Financial year ' + y.label + ' is closed. Re-open it under Accounts first.'); }
+function postBill(d) { if (d.vch || !d.bill || !(d.total > 0)) return; d.vch = svc.voucher(d.date, 'Sales', 'Bill ' + d.no + ' to ' + svc.wShopName(d.shopId), [{ acc: svc.wShopCus(d.shopId), dr: d.total }, { acc: 'sales', cr: d.total }], { kind: 'wbill', id: d.id, no: d.no }).id; }
+function postReturn(r) { if (r.vch || r.status !== 'Accepted' || !(r.credit > 0)) return; r.vch = svc.voucher(r.doneOn || r.date, 'Sales Return', 'Return ' + r.no + (r.extNo ? ' / ' + r.extNo : '') + ' from ' + svc.wShopName(r.shopId), [{ acc: 'salesret', dr: r.credit }, { acc: svc.wShopCus(r.shopId), cr: r.credit }], { kind: 'wret', id: r.id, no: r.no }).id; }
+function postPay(p) { if (p.vch) return; p.vch = svc.voucher(p.date, 'Receipt', 'Received from ' + svc.wShopName(p.shopId) + ' (' + p.mode + ')' + (p.note ? ' ' + p.note : ''), [{ acc: payAcc(p.mode), dr: p.amount }, { acc: svc.wShopCus(p.shopId), cr: p.amount }], { kind: 'wpay', id: p.id, no: p.no }).id; }
+
+var oAdd = svc.wAddStock;
+svc.wAddStock = function (lines, meta) {
+  meta = meta || {}; var pay = meta.pay || 'credit', sid = meta.supplierId || svc.wSupplierId(meta.supplier);
+  if (pay === 'credit' && !sid) throw new Error('Enter the supplier (or choose "Paid in cash" / "Paid by bank")');
+  openYear(meta.date);
+  var lots = oAdd(lines, meta), total = 0;
+  lots.forEach(function (l) { total += l.n * (l.cost || 0); }); total = PD.r2(total);
+  if (total > 0) {
+    var nm = sid ? svc.supName(sid) : '', v = svc.voucher(meta.date || PD.today(), 'Purchase', 'Stock in ' + lots.map(function (l) { return 'L' + l.no; }).join(', ') + (meta.bill ? ' / Bill ' + meta.bill : '') + (nm ? ' from ' + nm : '') + (pay === 'credit' ? '' : ' (paid ' + (pay === 'cash' ? 'cash' : 'bank') + ')'),
+      [{ acc: 'purchase', dr: total }, { acc: pay === 'credit' ? svc.partyAcc('sup', sid) : payAcc(pay), cr: total }], { kind: 'wpur', id: lots[0].id, no: 'L' + lots[0].no });
+    lots.forEach(function (l) { l.vch = v.id; l.supplierId = sid; l.pay = pay; });
+  }
+  PD.save(); return lots;
+};
+var oDisp = svc.wDispatch;
+svc.wDispatch = function (reqId, note) { openYear(); var d = oDisp(reqId, note); postBill(d); PD.save(); return d; };
+var oAcc = svc.wAcceptReturn;
+svc.wAcceptReturn = function (id, outcomes) { openYear(); var r = oAcc(id, outcomes); postReturn(r); PD.save(); return r; };
+var oPay = svc.wReceivePay;
+svc.wReceivePay = function (o) { openYear(o && o.date); var p = oPay(o); postPay(p); PD.save(); return p; };
+svc.wDeletePay = function (id) {
+  var a = svc.wPays(), p = a.find(function (x) { return x.id === id; }); if (!p) return;
+  var v = p.vch && D().vouchers.find(function (x) { return x.id === p.vch; });
+  if (v) { var y = D().years.find(function (x) { return x.id === v.year; }); if (y && y.closed) throw new Error('This payment is in a closed year and cannot be deleted'); D().vouchers = D().vouchers.filter(function (x) { return x !== v; }); }
+  a.splice(a.indexOf(p), 1); PD.log('Payment deleted ' + p.no, svc.wShopName(p.shopId) + ' ' + PD.n2(p.amount)); PD.save();
+};
+/* a shop's statement = every voucher on its account (bills, returns, payments, and anything entered under Accounts) */
+svc.wLedger = function (shopId) {
+  var acc = 'cus_' + shopId, d = D(), e = [], pays = {};
+  svc.wPays().forEach(function (p) { pays[p.id] = p; });
+  var first = d.years.slice().sort(function (a, b) { return a.start.localeCompare(b.start); })[0], ob = first && d.openBal[first.id] ? d.openBal[first.id][acc] || 0 : 0;
+  if (ob) e.push({ date: first.start, kind: 'Opening balance', no: '', dr: ob > 0 ? ob : 0, cr: ob < 0 ? -ob : 0, id: '' });
+  d.vouchers.filter(function (v) { return v.lines.some(function (l) { return l.acc === acc; }); }).sort(function (a, b) { return a.date.localeCompare(b.date) || a.no - b.no; }).forEach(function (v) {
+    var s = v.src || {}, dr = 0, cr = 0, p = s.kind === 'wpay' ? pays[s.id] : null;
+    v.lines.forEach(function (l) { if (l.acc === acc) { dr += l.dr; cr += l.cr; } });
+    e.push({ date: v.date, kind: s.kind === 'wbill' ? 'Bill' : s.kind === 'wret' ? 'Return' : s.kind === 'wpay' ? 'Payment' : v.type, mode: p ? p.mode : '', note: p ? p.note : (s.kind ? '' : v.narr), no: s.no || ('Vch #' + v.no), dr: PD.r2(dr), cr: PD.r2(cr), id: s.id || v.id });
+  });
+  var bal = 0; e.forEach(function (x) { bal = PD.r2(bal + x.dr - x.cr); x.bal = bal; });
+  return e;
+};
+svc.wDues = function () {
+  return D().shops.map(function (s) {
+    var l = svc.wLedger(s.id), r = { id: s.id, code: s.code, name: s.name, billed: 0, returns: 0, paid: 0, due: 0, last: '' };
+    l.forEach(function (x) { r.billed += x.dr; if (x.kind === 'Return') r.returns += x.cr; else { r.paid += x.cr; if (x.cr) r.last = x.date; } });
+    r.billed = PD.r2(r.billed); r.returns = PD.r2(r.returns); r.paid = PD.r2(r.paid); r.due = l.length ? l[l.length - 1].bal : 0;
+    return r;
+  });
+};
+/* first start with accounts: what is on the shelves now becomes opening stock; then post anything not yet posted */
+svc.wAcctInit = function () {
+  var d = D(); d.wpay = d.wpay || [];
+  try {
+    d.shops.forEach(function (s) { svc.wShopCus(s.id); });
+    if (!d.acctStart) {
+      d.acctStart = PD.today(); var v = svc.wStockValue();
+      if (v > 0) svc.voucher(PD.today(), 'Journal', 'Opening stock when accounts started (strips in the warehouse at purchase price)', [{ acc: 'openstock', dr: v }, { acc: 'capital', cr: v }], { kind: 'wopen' });
+    }
+    d.wdisp.forEach(postBill); d.wret.forEach(postReturn); d.wpay.forEach(postPay);
+  } catch (e) { console.warn('accounts start', e); }
 };
 })();

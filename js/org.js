@@ -120,7 +120,7 @@ PD.views.wshops = { render: function (host) {
 PD.views.wpnl = { render: function (host, arg) {
   var from = (arg && arg.from) || PD.today().slice(0, 8) + '01', to = (arg && arg.to) || PD.today();
   host.innerHTML = '<div class="card"><div class="bd row" style="gap:10px;align-items:flex-end;flex-wrap:wrap"><div class="fld" style="min-width:150px"><label>From</label><input class="in sm" type="date" id="plf" value="' + from + '"></div><div class="fld" style="min-width:150px"><label>To</label><input class="in sm" type="date" id="plt" value="' + to + '"></div>' +
-    '<button class="btn p sm" id="plg">Show</button><span class="hint">Cost = what the warehouse paid for the medicines (purchase rate). Sales are without GST.</span></div></div><div id="plr" style="margin-top:10px"></div>';
+    '<button class="btn p sm" id="plg">Show</button><span class="hint">Shop cost = the price on the warehouse bill to the shop. The warehouse row is the warehouse margin on those bills. Sales are without GST.</span></div></div><div id="plr" style="margin-top:10px"></div>';
   $('#plg', host).onclick = function () { PD.views.wpnl.render(host, { from: $('#plf', host).value, to: $('#plt', host).value }); };
   var out = $('#plr', host); out.innerHTML = '<div class="card"><div class="bd mut">Loading…</div></div>';
   C.listShops().then(function (shops) {
@@ -132,6 +132,7 @@ PD.views.wpnl = { render: function (host, arg) {
         ['total', 'sales', 'cost', 'returns', 'retCost', 'expense', 'profit'].forEach(function (k) { r[k] = PD.r2(r[k]); });
         return r;
       });
+      if (PD.svc.wMargin) { var w = PD.svc.wMargin(from, to); rows.push({ id: 'wh', code: 'WH', name: (PD.DB.settings.whName || 'Warehouse') + ' (bills to shops)', days: [], bills: w.bills, total: w.sales, sales: w.sales, cost: w.cost, returns: w.returns, retCost: w.retCost, expense: 0, netCost: PD.r2(w.cost - w.retCost), gross: w.gross, margin: (w.sales - w.returns) > 0 ? PD.r2(w.gross / (w.sales - w.returns) * 100) : 0, profit: w.gross }); }
       var stock = PD.svc.wStockValue ? PD.svc.wStockValue() : null;
       PD.report(out, { id: 'wpnl', title: 'Profit & Loss: ' + PD.fmtDate(from) + ' to ' + PD.fmtDate(to), load: function () { return { cols: [
         { k: 'code', label: 'Code' }, { k: 'name', label: 'Shop', fmt: function (v) { return '<b>' + esc(v) + '</b>'; } }, { k: 'bills', label: 'Bills', align: 'r', sum: true, fmtSum: function (t) { return String(Math.round(t)); } },
@@ -139,7 +140,7 @@ PD.views.wpnl = { render: function (host, arg) {
         { k: 'netCost', label: 'Cost of medicines', align: 'r', sum: true, fmt: PD.n2 }, { k: 'gross', label: 'Gross profit', align: 'r', sum: true, fmt: PD.n2 },
         { k: 'margin', label: 'Margin %', align: 'r', fmt: function (v) { return PD.n2(v) + '%'; } }, { k: 'expense', label: 'Expenses', align: 'r', sum: true, fmt: PD.n2 },
         { k: 'profit', label: 'Net profit', align: 'r', sum: true, fmt: function (v) { return '<b style="color:' + (v < 0 ? '#c62828' : '#2e7d32') + '">' + PD.n2(v) + '</b>'; }, raw: function (r) { return r.profit; } }],
-        rows: rows, note: 'Total row = the whole business. Each shop sends its figures automatically while it is open and online.' + (stock != null ? ' Stock in the warehouse now (at cost): ₹' + PD.n2(stock) + '.' : '') + ' Click a shop for day-wise figures.' }; },
+        rows: rows, note: 'Net profit total = the whole business (the warehouse row shows its margin on bills to your own shops). Each shop sends its figures automatically while it is open and online.' + (stock != null ? ' Stock in the warehouse now (at cost): ₹' + PD.n2(stock) + '.' : '') + ' Click a shop for day-wise figures.' }; },
         drill: function (r) {
           var ds = r.days.slice().sort(function (a, b) { return a.date < b.date ? -1 : 1; });
           PD.modal({ title: r.name + ': day-wise', size: 'lg', body: '<table class="t"><thead><tr><th>Date</th><th class="r">Bills</th><th class="r">Sales</th><th class="r">Returns</th><th class="r">Cost</th><th class="r">Expenses</th><th class="r">Net profit</th></tr></thead><tbody>' +

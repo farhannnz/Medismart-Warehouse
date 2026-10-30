@@ -5,9 +5,9 @@ var PD = window.PD, esc = PD.esc, svc = PD.svc, $ = PD.$, $$ = PD.$$;
 
 var NAV = [
   ['Stock', [['wadd', 'Add Stock', 'cart', 'F2'], ['wstock', 'Current Stock', 'box', 'F5'], ['wshelves', 'Shelves', 'box', ''], ['wscan', 'Strip Lookup', 'explore', 'F6']]],
-  ['Shops', [['wreq', 'Shop Requests (scan & dispatch)', 'order', 'F3'], ['wret', 'Returns from Shops', 'ret', 'F4'], ['wshops', 'Shops & Logins', 'users', ''], ['wpnl', 'Profit & Loss (all shops)', 'report', 'F8']]],
+  ['Shops', [['wreq', 'Shop Requests (scan & dispatch)', 'order', 'F3'], ['wret', 'Returns from Shops', 'ret', 'F4'], ['wacc', 'Shop Accounts (udhaar)', 'rupee', 'F9'], ['wshops', 'Shops & Logins', 'users', ''], ['wpnl', 'Profit & Loss (all shops)', 'report', 'F8']]],
   ['Items', [['itemdlg', 'New / Edit Item', 'pill', '']]],
-  ['Insights', [['wrep', 'Reports', 'report', 'F7']]],
+  ['Insights', [['wrep', 'Reports', 'report', 'F7'], ['accounts', 'Accounts', 'book', 'F10']]],
   ['Setup', [['attendance', 'Attendance', 'users', ''], ['settings', 'Settings & Staff', 'gear', '']]]
 ];
 var TITLES = {}; NAV.forEach(function (g) { g[1].forEach(function (i) { TITLES[i[0]] = i[1]; }); });
@@ -44,6 +44,7 @@ function migrate() {
   Object.keys(B).forEach(function (k) { if (D[k] === undefined) D[k] = B[k]; });
   Object.keys(B.settings).forEach(function (k) { if (D.settings[k] === undefined) D.settings[k] = B.settings[k]; });
   svc.currentYear(); D.wSeeded = true;
+  if (svc.wAcctInit) svc.wAcctInit();
 }
 
 PD.logout = function () {
@@ -62,11 +63,15 @@ var MENUS = [
     ['Add Stock (goods received)', 'wadd', null, 'F2'], ['Current Stock', 'wstock', null, 'F5'], ['Shelves', 'wshelves'], ['Strip Lookup (scan)', 'wscan', null, 'F6'], '-',
     ['Lot-wise Stock', 'wrep', { report: 'lots' }], ['Expiry Report', 'wrep', { report: 'expiry' }], ['Low Stock', 'wrep', { report: 'low' }], ['Written-off Stock', 'wrep', { report: 'bad' }]]],
   ['Shops', [
-    ['Shops && Logins', 'wshops'], ['Profit && Loss (all shops)', 'wpnl', null, 'F8'], '-',
+    ['Shop Accounts (udhaar)', 'wacc', null, 'F9'], ['Shops && Logins', 'wshops'], ['Profit && Loss (all shops)', 'wpnl', null, 'F8'], '-',
     ['Shop Requests (scan & dispatch)', 'wreq', null, 'F3'], ['Dispatch History', 'wreq', { tab: 'hist' }], ['Returns from Shops', 'wret', null, 'F4'], '-',
     ['Shop-wise Summary', 'wrep', { report: 'shopsum' }], ['Requests Register', 'wrep', { report: 'reqs' }], ['Returns Register', 'wrep', { report: 'rets' }]]],
   ['Reports', [
     ['All Reports', 'wrep', null, 'F7'], ['Stock Valuation', 'wrep', { report: 'val' }], ['Goods Received Register', 'wrep', { report: 'inward' }], ['Dispatch Register', 'wrep', { report: 'disp' }], ['Medicine-wise Dispatch', 'wrep', { report: 'itemsent' }], ['Attendance', 'wrep', { report: 'att' }]]],
+  ['Accounts', [
+    ['Receive / Pay / Expense (Accounts)', 'accounts'], ['Shop Accounts (udhaar)', 'wacc', null, 'F9'], '-',
+    ['Day Book', 'accounts', { tab: 'daybook' }], ['Ledger', 'accounts', { tab: 'ledger' }], ['Trial Balance', 'accounts', { tab: 'tb' }], ['Profit && Loss / Balance Sheet', 'accounts', { tab: 'pnl' }], ['Receivables && Payables', 'accounts', { tab: 'dues' }], '-',
+    ['Suppliers', 'masters', { tab: 'suppliers' }], ['Account Heads', 'accounts', { tab: 'heads' }], ['New / Edit Account', 'acctdlg'], ['Year Closing', 'accounts', { tab: 'year' }]]],
   ['Tools', [
     ['Staff && Rights', 'settings', { tab: 'users' }], ['Options', 'settings', { tab: 'shop' }], ['Attendance Register', 'attendance'], ['Backup && Data', 'settings', { tab: 'data' }]]],
   ['View', [['Medicine List Panel', 'dock:items'], ['Alerts Panel', 'dock:msg'], '-', ['Close All Windows', 'closeall'], ['Dark Mode', 'toggle:dark']]],
@@ -75,12 +80,12 @@ var MENUS = [
 /* toolbar: [title, icon, action, colour] */
 var TOOLS = [
   ['Add stock (F2)', 'cart', 'wadd', '#2e8b57'], ['Stock (F5)', 'box', 'wstock', '#8a5a2b'], ['Strip lookup (F6)', 'explore', 'wscan', '#7b5ea7'], '|',
-  ['Shop requests (F3)', 'order', 'wreq', '#1e88a8'], ['Returns (F4)', 'ret', 'wret', '#c77d00'], ['Profit & Loss (F8)', 'report', 'wpnl', '#2e7d32'], ['Shops & logins', 'users', 'wshops', '#5d4037'], '|',
-  ['New / edit item', 'pill', 'itemdlg', '#2f6fb3'], ['Reports (F7)', 'report', 'wrep', '#1e88a8'], '|',
+  ['Shop requests (F3)', 'order', 'wreq', '#1e88a8'], ['Returns (F4)', 'ret', 'wret', '#c77d00'], ['Shop accounts (F9)', 'rupee', 'wacc', '#b23c17'], ['Profit & Loss (F8)', 'report', 'wpnl', '#2e7d32'], ['Shops & logins', 'users', 'wshops', '#5d4037'], '|',
+  ['New / edit item', 'pill', 'itemdlg', '#2f6fb3'], ['Reports (F7)', 'report', 'wrep', '#1e88a8'], ['Accounts (F10)', 'book', 'accounts', '#6a3fa0'], '|',
   ['Settings', 'gear', 'settings', '#666'], ['Log out', 'lock', 'logout', '#7a8a2e']
 ];
 var TITLES = {}; NAV.forEach(function (g) { g[1].forEach(function (i) { TITLES[i[0]] = i[1]; }); }); TITLES.home = 'Warehouse'; TITLES.masters = 'Manufacturers'; TITLES.itemsexport = 'Item List for Shops'; TITLES.attendance = 'Attendance'; TITLES.shelves = 'Shelves'; TITLES.itemsimport = 'Import Item List'; TITLES.dnote = 'Delivery Note'; TITLES.batchedit = 'Batch Edit'; TITLES.expclaim = 'ExpiryClaim'; TITLES.itemdlg = 'Item'; TITLES.acctdlg = 'Account Details'; TITLES.request = 'Stock Request'; TITLES.reqlist = 'Request List'; TITLES.receive = 'Receive Stock'; TITLES.attendance = 'Attendance'; TITLES.custhist = 'Customer History';
-var RIGHT = { wshops: 'shopsadmin', wpnl: 'reports', wadd: 'addstock', wstock: 'stock', wshelves: 'stock', wscan: 'stock', wreq: 'requests', wret: 'returns', wrep: 'reports', itemdlg: 'items', itemsexport: 'items', masters: 'items', settings: 'users' };
+var RIGHT = { accounts: 'accounts', acctdlg: 'accounts', wshops: 'shopsadmin', wpnl: 'reports', wacc: 'reports', wadd: 'addstock', wstock: 'stock', wshelves: 'stock', wscan: 'stock', wreq: 'requests', wret: 'returns', wrep: 'reports', itemdlg: 'items', itemsexport: 'items', masters: 'items', settings: 'users' };
 var wins = [], cur = 'home', docks = { items: false, mfrs: false, sups: false, msg: true }, ui = { toolbar: true, status: true };
 PD.go = function (route, arg) { openWin(route, arg); };
 
@@ -219,7 +224,7 @@ function renderWin() {
 function render() { renderWin(); }
 
 /* ---------- keyboard ---------- */
-var FKEYS = { F2: 'wadd', F3: 'wreq', F4: 'wret', F5: 'wstock', F6: 'wscan', F7: 'wrep' };
+var FKEYS = { F2: 'wadd', F3: 'wreq', F4: 'wret', F5: 'wstock', F6: 'wscan', F7: 'wrep', F8: 'wpnl', F9: 'wacc', F10: 'accounts' };
 addEventListener('keydown', function (e) {
   if (!PD.user) return;
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); palette(); return; }

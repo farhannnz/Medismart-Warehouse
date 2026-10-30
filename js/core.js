@@ -513,7 +513,9 @@ svc.removeMaster = function (coll, id) {
 svc.partyBalance = function (kind, id) {
   var acc = (kind === 'sup' ? 'sup_' : 'cus_') + id, dr = 0, cr = 0;
   D().vouchers.forEach(function (v) { v.lines.forEach(function (l) { if (l.acc === acc) { dr += l.dr; cr += l.cr; } }); });
-  Object.keys(D().openBal).forEach(function (y) { var n = D().openBal[y][acc]; if (n) { if (n > 0) dr += n; else cr += -n; } });
+  /* only the first year's opening balance: later years' openings are carried forward from vouchers already counted above */
+  var y0 = D().years.slice().sort(function (a, b) { return a.start.localeCompare(b.start); })[0], n = y0 && D().openBal[y0.id] ? D().openBal[y0.id][acc] : 0;
+  if (n) { if (n > 0) dr += n; else cr += -n; }
   return PD.r2(kind === 'sup' ? cr - dr : dr - cr);
 };
 })();

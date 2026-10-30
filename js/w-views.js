@@ -15,24 +15,50 @@ var orm = svc.removeMaster; svc.removeMaster = function (c, id) { if (c === 'ite
 PD.views.wadd = { render: function (host) {
   var d = D(), grid;
   host.innerHTML = '<div class="msw pw">' + band('Add Stock - goods received in the warehouse') + '<div class="subtab"><span>Goods Received</span></div>' +
-    '<div class="phead"><fieldset><legend>Receipt Details</legend>' + field('Date :', '<input class="in" readonly value="' + PD.fmtDate(PD.today()) + '">') + field('Supplier :', '<input class="in" id="sup" placeholder="who sent the goods">') + field('Bill no :', '<input class="in" id="bill">') + '</fieldset>' +
+    '<div class="phead"><fieldset><legend>Receipt Details</legend>' + field('Date :', '<input class="in" readonly value="' + PD.fmtDate(PD.today()) + '">') + field('Supplier :', '<input class="in" id="sup" list="suplist" placeholder="who sent the goods" autocomplete="off"><datalist id="suplist">' + d.suppliers.filter(function (s) { return s.active !== false; }).map(function (s) { return '<option value="' + esc(s.name) + '">'; }).join('') + '</datalist>') + field('Bill no :', '<input class="in" id="bill">') + field('Payment :', '<select class="in" id="pay"><option value="credit">On credit (pay the supplier later)</option><option value="cash">Paid in cash</option><option value="bank">Paid by bank / UPI</option></select>') + '</fieldset>' +
     '<fieldset class="sd"><legend>How this works</legend><div class="pf wide"><span class="hint">1. Search the medicine (it must already be created under Items). 2. Enter batch, expiry, number of strips and the prices. 3. Save: every strip gets its own barcode label. Print the labels and stick one on each strip. The shelf is shown so the stock goes to the right place.</span></div></fieldset></div>' +
+    '<div class="scanbox" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 10px"><label><b>Scan barcode:</b></label><input class="in" id="bscan" autocomplete="off" placeholder="click here, then scan the barcode / QR on the medicine box or strip" style="font-size:15px;flex:1;min-width:240px"><span id="bfb" class="fb hint">Each scan adds 1 strip. Batch and expiry fill in by themselves when the code has them (2D / QR codes).</span></div>' +
     '<div class="pgrid" id="gr"></div>' +
     '<div class="msbot"><div class="mspanel"><div class="subtabs"><span class="on">&nbsp;&nbsp;.&nbsp;&nbsp;</span></div><div class="mspb"><div class="r3"><label>Lines :</label><b id="ic">0</b><label>Strips :</label><b id="is">0</b></div></div></div><div class="mstot"><div class="tl"><label>At cost :</label><input class="in" id="t1" readonly value="0.00"></div><div class="tl"><label>At shop price :</label><input class="in" id="t2" readonly value="0.00"></div><div class="net"><span>Margin :</span><b id="t3">0.00</b></div></div></div>' +
     '<div class="msbtns"><button class="mb" id="nw">New</button><span class="sp"></span><button class="mb" id="sv">💾 Save &amp; Print Labels</button></div></div>';
-  grid = PD.grid($('#gr', host), { id: 'wadd-grid', newLine: function () { return { itemId: '', batchNo: '', expiry: '', strips: '', cost: '', sell: '', mrp: '' }; },
+  /* prices: same as the last lot of this medicine, else a guess from the MRP */
+  function prices(l, it) { var last = d.lots.filter(function (x) { return x.itemId === it.id; }).pop(); l.mrp = last ? last.mrp : it.mrp; l.cost = last ? last.cost : PD.r2(it.mrp * 0.62); l.sell = last ? last.sell : PD.r2(it.mrp * 0.72); }
+  function newLine() { return { itemId: '', batchNo: '', expiry: '', strips: '', cost: '', sell: '', mrp: '' }; }
+  grid = PD.grid($('#gr', host), { id: 'wadd-grid', newLine: newLine,
     cols: [{ k: 'item', label: 'Medicine', type: 'item', always: true }, { k: 'batchNo', label: 'Batch no.', w: 90 }, { k: 'expiry', label: 'Expiry', type: 'month', w: 120 }, { k: 'strips', label: 'No. of strips', type: 'number', align: 'r', w: 80 },
       { k: 'cost', label: 'Purchase price / strip', type: 'number', align: 'r', w: 92 }, { k: 'sell', label: 'Selling price to shop / strip', type: 'number', align: 'r', w: 100 }, { k: 'mrp', label: 'MRP / strip', type: 'number', align: 'r', w: 78 },
       { k: 'shelf', label: 'Shelf', type: 'calc', calc: function (l) { return l.itemId ? (svc.item(l.itemId).rack || '—') : ''; } }, { k: 'del', type: 'del', always: true }],
-    onItem: function (l, it) { l.mrp = it.mrp; l.cost = PD.r2(it.mrp * 0.62); l.sell = PD.r2(it.mrp * 0.72); },
+    onItem: prices,
     hint: function (l) { if (!l.itemId) return ''; var it = svc.item(l.itemId); return '<b>' + esc(it.name) + '</b> • shelf <b>' + esc(it.rack || 'NOT SET') + '</b> • in warehouse now <b>' + svc.wStock(it.id) + '</b> strips • reorder level ' + it.reorder; },
     itemFilter: null,
     onChange: function (ls) { var n = 0, s = 0, c = 0, p = 0; ls.forEach(function (l) { if (l.itemId) { n++; s += PD.num(l.strips); c += PD.num(l.strips) * PD.num(l.cost); p += PD.num(l.strips) * PD.num(l.sell); } }); var a = $('#ic', host); if (!a) return; a.textContent = n; $('#is', host).textContent = s; $('#t1', host).value = PD.n2(c); $('#t2', host).value = PD.n2(p); $('#t3', host).textContent = PD.n2(p - c); } });
   grid.addLine(false);
+  var bscan = $('#bscan', host), bfb = $('#bfb', host);
+  function say(ok, msg) { beep(ok); bfb.innerHTML = '<span style="color:' + (ok ? '#2e8b57' : '#c62828') + '">' + (ok ? '✔ ' : '✖ ') + msg + '</span>'; bscan.focus(); }
+  function put(it, c) {
+    var ls = grid.lines().filter(function (l) { return l.itemId; }), same = null;
+    for (var i = ls.length - 1; i >= 0 && !same; i--) { var l = ls[i]; if (l.itemId === it.id && (!c.batch || String(l.batchNo || '').toUpperCase() === c.batch.toUpperCase() || !l.batchNo) && (!c.expiry || !l.expiry || l.expiry === c.expiry)) same = l; }
+    if (same) { same.strips = PD.num(same.strips) + 1; if (c.batch && !same.batchNo) same.batchNo = c.batch; if (c.expiry && !same.expiry) same.expiry = c.expiry; }
+    else { same = newLine(); same.itemId = it.id; prices(same, it); same.batchNo = c.batch || ''; same.expiry = c.expiry || ''; same.strips = 1; ls.push(same); }
+    grid.setLines(ls);
+    say(true, '<b>' + esc(it.name) + '</b> • strips <b>' + same.strips + '</b>' + (same.batchNo ? ' • batch ' + esc(same.batchNo) : '') + (same.expiry ? ' • exp ' + PD.fmtExp(same.expiry) : '') + ' • shelf <b>' + esc(it.rack || '—') + '</b>' + (!same.batchNo || !same.expiry ? ' <span style="color:#c77d00">(type the batch / expiry)</span>' : ''));
+  }
+  function askLink(c) {
+    beep(false);
+    var m = PD.modal({ title: 'New barcode: which medicine is this?', size: 'md', body: '<p>Code <b>' + esc(c.code) + '</b> is not linked to any medicine yet. Pick the medicine once; from now on this code will find it straight away.</p><div class="fld"><label>Medicine</label><input class="in" id="lk" placeholder="type the name..." autocomplete="off"></div><p class="hint">Not in the list? Create it first under Items → New / Edit Item.</p>', foot: [{ label: 'Cancel' }], onClose: function () { setTimeout(function () { bscan.focus(); }, 30); } });
+    PD.combo($('#lk', m.el), { source: PD.itemSource({ stock: false }), onPick: function (x) { try { var it = svc.wLinkCode(x.id, c.code); m.close(); put(it, c); } catch (e) { PD.err(e); } } });
+  }
+  bscan.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter') return; e.preventDefault(); var v = bscan.value; bscan.value = ''; if (!v.trim()) return;
+    if (svc.wParse(v)) return say(false, 'This is our own strip label. Scan the company barcode on the box / strip.');
+    var c = svc.wReadCode(v); if (!c || !c.code) return say(false, 'Could not read this code');
+    var it = svc.wItemByCode(c.code); if (it) put(it, c); else askLink(c);
+  });
+  setTimeout(function () { bscan.focus(); }, 50);
   $('#nw', host).onclick = function () { PD.views.wadd.render(host); };
   $('#sv', host).onclick = function () {
     try {
-      var lots = svc.wAddStock(grid.lines(), { supplier: $('#sup', host).value, bill: $('#bill', host).value });
+      var lots = svc.wAddStock(grid.lines(), { supplier: $('#sup', host).value, bill: $('#bill', host).value, pay: $('#pay', host).value });
       var tot = lots.reduce(function (a, l) { return a + l.n; }, 0);
       var m = PD.modal({ title: 'Stock added: ' + lots.length + ' lot(s), ' + tot + ' strips', size: 'lg', body: '<p class="hint" style="margin-bottom:8px">Print the labels, stick one on every strip, then keep the strips on the shelf shown.</p><div class="tw"><table class="t"><thead><tr><th>Medicine</th><th>Lot</th><th>Batch</th><th>Expiry</th><th class="r">Strips</th><th>Keep on shelf</th></tr></thead><tbody>' + lots.map(function (l) { return '<tr><td><b>' + esc(svc.itemName(l.itemId)) + '</b></td><td>L' + l.no + '</td><td>' + esc(l.batchNo) + '</td><td>' + PD.fmtExp(l.expiry) + '</td><td class="r">' + l.n + '</td><td><b style="font-size:15px">' + esc(svc.item(l.itemId).rack) + '</b></td></tr>'; }).join('') + '</tbody></table></div>', foot: [{ label: 'Close' }, { label: 'Print labels', cls: 'p', icon: 'print', fn: function () { svc.wPrintLabels(lots); return false; } }] });
       PD.views.wadd.render(host);
@@ -96,6 +122,13 @@ PD.views.wscan = { render: function (host) {
 
 /* ================= SHOP REQUESTS + SCAN & DISPATCH ================= */
 function challanHTML(d) {
+  if (d.bill) {
+    var led = svc.wLedger(d.shopId), me = led.find(function (x) { return x.id === d.id; }), after = me ? me.bal : d.total, before = PD.r2(after - d.total);
+    return '<h2>' + esc(D().shop.name) + '</h2><h3>Bill ' + esc(d.no) + '</h3><div>' + PD.fmtDate(d.date) + ' • Request ' + esc(d.extNo) + ' • To: <b>' + esc(svc.wShopName(d.shopId)) + '</b></div><br><table><thead><tr><th>#</th><th>Medicine</th><th>Batch</th><th>Exp</th><th class="r">Strips</th><th class="r">MRP</th><th class="r">Rate</th><th class="r">Amount</th></tr></thead><tbody>' +
+      d.lines.map(function (l, i) { return '<tr><td>' + (i + 1) + '</td><td>' + esc(svc.itemName(l.itemId)) + '</td><td>' + esc(l.batchNo) + '</td><td>' + PD.fmtExp(l.expiry) + '</td><td class="r">' + l.qty + '</td><td class="r">' + PD.n2(l.mrp) + '</td><td class="r">' + PD.n2(l.rate) + '</td><td class="r">' + PD.n2(l.qty * l.rate) + '</td></tr>'; }).join('') +
+      '</tbody><tfoot><tr><td colspan="7" class="r"><b>Bill total</b> (no GST)</td><td class="r b">' + PD.n2(d.total) + '</td></tr><tr><td colspan="7" class="r">Earlier balance</td><td class="r">' + PD.n2(before) + '</td></tr><tr><td colspan="7" class="r"><b>Total due from the shop</b></td><td class="r b">' + PD.n2(after) + '</td></tr></tfoot></table>' +
+      '<p style="margin-top:10px">Strips: ' + d.serials.length + (d.note ? ' • Note: ' + esc(d.note) : '') + ' • Packed by ' + esc(d.by || '') + '</p><br><br><div style="display:flex;justify-content:space-between"><span>Received by (shop)</span><span>For ' + esc(D().shop.name) + '</span></div>';
+  }
   return '<h2>' + esc(D().shop.name) + '</h2><h3>Delivery challan ' + esc(d.no) + '</h3><div>' + PD.fmtDate(d.date) + ' • Request ' + esc(d.extNo) + ' • To: <b>' + esc(svc.wShopName(d.shopId)) + '</b></div><br><table><thead><tr><th>#</th><th>Medicine</th><th>Batch</th><th>Exp</th><th class="r">Strips</th><th class="r">Rate</th><th class="r">GST%</th><th class="r">Amount</th></tr></thead><tbody>' + d.lines.map(function (l, i) { return '<tr><td>' + (i + 1) + '</td><td>' + esc(svc.itemName(l.itemId)) + '</td><td>' + esc(l.batchNo) + '</td><td>' + PD.fmtExp(l.expiry) + '</td><td class="r">' + l.qty + '</td><td class="r">' + PD.n2(l.rate) + '</td><td class="r">' + l.tax + '</td><td class="r">' + PD.n2(l.qty * l.rate) + '</td></tr>'; }).join('') + '</tbody><tfoot><tr><td colspan="7" class="r">Taxable ' + PD.n2(d.taxable) + ' + GST ' + PD.n2(d.tax) + '</td><td class="r b">' + PD.n2(d.total) + '</td></tr></tfoot></table>';
 }
 PD.views.wreq = { render: function (host, arg) {
@@ -104,7 +137,7 @@ PD.views.wreq = { render: function (host, arg) {
   PD.on(host, 'click', '[data-t]', function (e, t) { PD.views.wreq.render(host, { tab: t.dataset.t }); });
   var b = $('#wb', host);
   if (tab === 'hist') {
-    b.innerHTML = '<div class="msgrid" style="margin:0;max-height:62vh;background:#fff"><table class="t"><thead><tr><th>Dispatch</th><th>Date</th><th>Shop</th><th>Request</th><th class="r">Strips</th><th class="r">Value</th><th></th></tr></thead><tbody>' + (d.wdisp.slice().reverse().map(function (x) { return '<tr><td><b>' + esc(x.no) + '</b></td><td>' + PD.fmtDate(x.date) + '</td><td>' + esc(svc.wShopName(x.shopId)) + '</td><td>' + esc(x.extNo) + '</td><td class="r">' + x.serials.length + '</td><td class="r">' + PD.n2(x.total) + '</td><td class="r nw"><button class="btn sm" data-pr="' + x.id + '">Print challan</button></td></tr>'; }).join('') || '<tr><td colspan="7"><div class="empty">Nothing dispatched yet.</div></td></tr>') + '</tbody></table></div>';
+    b.innerHTML = '<div class="msgrid" style="margin:0;max-height:62vh;background:#fff"><table class="t"><thead><tr><th>Dispatch</th><th>Date</th><th>Shop</th><th>Request</th><th class="r">Strips</th><th class="r">Value</th><th></th></tr></thead><tbody>' + (d.wdisp.slice().reverse().map(function (x) { return '<tr><td><b>' + esc(x.no) + '</b></td><td>' + PD.fmtDate(x.date) + '</td><td>' + esc(svc.wShopName(x.shopId)) + '</td><td>' + esc(x.extNo) + '</td><td class="r">' + x.serials.length + '</td><td class="r">' + PD.n2(x.total) + '</td><td class="r nw"><button class="btn sm" data-pr="' + x.id + '">' + (x.bill ? 'Print bill' : 'Print challan') + '</button></td></tr>'; }).join('') || '<tr><td colspan="7"><div class="empty">Nothing dispatched yet.</div></td></tr>') + '</tbody></table></div>';
     PD.on(b, 'click', '[data-pr]', function (e, t) { PD.printHTML(challanHTML(d.wdisp.find(function (x) { return x.id === t.dataset.pr; }))); });
     return;
   }
@@ -128,11 +161,41 @@ PD.views.wreq = { render: function (host, arg) {
     scn.addEventListener('keydown', function (e) { if (e.key !== 'Enter') return; e.preventDefault(); var v = scn.value; scn.value = ''; if (!v.trim()) return; var res = svc.wPickScan(r.id, v); beep(res.ok); draw((res.ok ? '<span style="color:#2e8b57">✔ ' : '<span style="color:#c62828">✖ ') + esc(res.msg) + '</span>' + (res.warn ? '<br><span style="color:#c77d00">' + esc(res.warn) + '</span>' : '')); });
     PD.on(det, 'click', '[data-rm]', function (e, t) { svc.wPickRemove(r.id, t.dataset.rm); draw(); });
     $('#ap', det).onclick = function () {
-      try { var nd = svc.wDispatch(r.id, $('#dn', det).value); PD.toast('Dispatched ' + nd.no + ' • sent to the shop', 'ok'); PD.confirm('Print the delivery challan?', 'Print').then(function (ok) { if (ok) PD.printHTML(challanHTML(nd)); }); PD.views.wreq.render(host, { reqId: r.id }); } catch (e) { PD.err(e); }
+      try { var nd = svc.wDispatch(r.id, $('#dn', det).value); PD.toast('Dispatched ' + nd.no + ' • sent to the shop', 'ok'); PD.confirm('Bill ' + nd.no + ' for ₹' + PD.n2(nd.total) + ' is added to ' + esc(svc.wShopName(nd.shopId)) + "'s account. Print the bill?", 'Print bill').then(function (ok) { if (ok) PD.printHTML(challanHTML(nd)); }); PD.views.wreq.render(host, { reqId: r.id }); } catch (e) { PD.err(e); }
     };
     $('#rj', det).onclick = function () { PD.prompt('Reject request ' + r.extNo, 'Reason (shown to the shop)').then(function (v) { if (v == null) return; try { svc.wRejectRequest(r.id, v); PD.toast('Request rejected'); PD.views.wreq.render(host); } catch (er) { PD.err(er); } }); };
   }
   draw();
+} };
+
+/* ================= SHOP ACCOUNTS (bills, payments, balance due) ================= */
+PD.views.wacc = { render: function (host) {
+  host.innerHTML = '<div class="msw whw">' + band('Shop Accounts - bills, payments and balance due') + '<div class="row" style="padding:8px 10px;gap:10px;flex-wrap:wrap"><button class="btn p" id="rp">+ Receive payment</button><span class="hint">Every dispatch is a bill to the shop at your selling price (no GST). Accepted returns and payments reduce the balance. Click a shop to see its statement.</span></div><div id="ar" style="padding:0 10px 10px"></div></div>';
+  var rep = PD.report($('#ar', host), { id: 'wacc', title: 'Balance due from shops', load: function () { return { cols: [
+    { k: 'code', label: 'Code' }, { k: 'name', label: 'Shop', fmt: function (v) { return '<b>' + esc(v) + '</b>'; } },
+    { k: 'billed', label: 'Bills', align: 'r', sum: true, fmt: PD.n2 }, { k: 'returns', label: 'Returns', align: 'r', sum: true, fmt: PD.n2 }, { k: 'paid', label: 'Received', align: 'r', sum: true, fmt: PD.n2 },
+    { k: 'due', label: 'Balance due', align: 'r', sum: true, fmt: function (v) { return '<b style="color:' + (v > 0 ? '#c62828' : '#2e7d32') + '">' + PD.n2(v) + '</b>'; }, raw: function (r) { return r.due; } },
+    { k: 'last', label: 'Last payment', fmt: function (v) { return v ? PD.fmtDate(v) : '—'; } },
+    { k: '_a', label: '', raw: function () { return ''; }, fmt: function (v, r) { return '<button class="btn sm" data-pay="' + r.id + '">Receive</button>'; } }],
+    rows: svc.wDues(), note: 'Same figures as the shop\'s account under Accounts. Older dispatches (sent at cost, before billing started) are not counted.' }; },
+    drill: function (r) { statement(r.id); } });
+  function again() { PD.views.wacc.render(host); }
+  PD.on(host, 'click', '[data-pay]', function (e, t) { receive(t.dataset.pay); });
+  $('#rp', host).onclick = function () { receive(''); };
+  function receive(shopId) {
+    var f = [{ k: 'shopId', label: 'Shop', type: 'select', req: true, options: function () { return [['', '— select shop —']].concat(D().shops.map(function (s) { return [s.id, s.name + ' (due ' + PD.n2(svc.wDue(s.id)) + ')']; })); } },
+      { k: 'amount', label: 'Amount received (₹)', type: 'number', req: true }, { k: 'mode', label: 'Mode', type: 'select', options: ['Cash', 'UPI', 'Bank transfer', 'Cheque'] },
+      { k: 'date', label: 'Date', type: 'date' }, { k: 'note', label: 'Note (UPI ref / cheque no.)', full: true }];
+    PD.modal({ title: 'Receive payment from a shop', size: 'md', body: PD.formHTML(f, { shopId: shopId, date: PD.today(), mode: 'Cash' }), foot: [{ label: 'Cancel' }, { label: 'Save', cls: 'p', fn: function (api) {
+      try { var v = PD.readForm(api.el, f), p = svc.wReceivePay(v); PD.toast('Received ₹' + PD.n2(p.amount) + ' from ' + svc.wShopName(p.shopId) + ' • balance now ₹' + PD.n2(svc.wDue(p.shopId)), 'ok'); again(); } catch (e) { PD.err(e); return false; }
+    } }] });
+  }
+  function statement(shopId) {
+    var l = svc.wLedger(shopId), name = svc.wShopName(shopId);
+    function html() { return '<table class="t"><thead><tr><th>Date</th><th>Entry</th><th>No.</th><th class="r">Bill</th><th class="r">Paid / returned</th><th class="r">Balance</th><th></th></tr></thead><tbody>' + (l.map(function (x) { return '<tr><td>' + PD.fmtDate(x.date) + '</td><td>' + esc(x.kind + (x.mode ? ' (' + x.mode + ')' : '')) + (x.note ? '<br><small class="mut">' + esc(x.note) + '</small>' : '') + '</td><td>' + esc(x.no) + '</td><td class="r">' + (x.dr ? PD.n2(x.dr) : '') + '</td><td class="r">' + (x.cr ? PD.n2(x.cr) : '') + '</td><td class="r"><b>' + PD.n2(x.bal) + '</b></td><td class="r no-print">' + (x.kind === 'Payment' ? '<button class="btn sm g" data-dp="' + x.id + '">delete</button>' : '') + '</td></tr>'; }).join('') || '<tr><td colspan="7" class="mut">No bills yet.</td></tr>') + '</tbody></table>'; }
+    var m = PD.modal({ title: name + ': statement', size: 'lg', body: html(), foot: [{ label: 'Close' }, { label: 'Print', icon: 'print', fn: function () { PD.printHTML('<h2>' + esc(D().shop.name) + '</h2><h3>Statement: ' + esc(name) + '</h3><div>' + PD.fmtDate(PD.today()) + ' • Balance due ₹' + PD.n2(svc.wDue(shopId)) + '</div><br>' + html()); return false; } }, { label: 'Receive payment', cls: 'p', fn: function () { receive(shopId); } }] });
+    PD.on(m.el, 'click', '[data-dp]', function (e, t) { PD.confirm('Delete this payment entry?', 'Delete', true).then(function (ok) { if (!ok) return; svc.wDeletePay(t.dataset.dp); m.close(); again(); statement(shopId); }); });
+  }
 } };
 
 /* ================= RETURNS FROM SHOPS ================= */
