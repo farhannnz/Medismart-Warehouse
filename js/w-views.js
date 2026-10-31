@@ -20,7 +20,7 @@ PD.views.wadd = { render: function (host) {
     '<div class="scanbox" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 10px"><label><b>Scan barcode:</b></label><input class="in" id="bscan" autocomplete="off" placeholder="click here, then scan the barcode / QR on the medicine box or strip" style="font-size:15px;flex:1;min-width:240px"><span id="bfb" class="fb hint">Each scan adds 1 strip. Batch and expiry fill in by themselves when the code has them (2D / QR codes).</span></div>' +
     '<div class="pgrid" id="gr"></div>' +
     '<div class="msbot"><div class="mspanel"><div class="subtabs"><span class="on">&nbsp;&nbsp;.&nbsp;&nbsp;</span></div><div class="mspb"><div class="r3"><label>Lines :</label><b id="ic">0</b><label>Strips :</label><b id="is">0</b></div></div></div><div class="mstot"><div class="tl"><label>Total :</label><input class="in" id="t1" readonly value="0.00"></div><div class="tl"><label>GST :</label><input class="in" id="t2" readonly value="0.00"></div><div class="tl"><label>Margin :</label><input class="in" id="t4" readonly value="0.00"></div><div class="net"><span>Net Total :</span><b id="t3">0.00</b></div></div></div>' +
-    '<div class="msbtns"><button class="mb" id="nw">New</button><button class="mb" id="up">📄 Upload bill (Excel / CSV)</button><span class="sp"></span><button class="mb" id="sv">💾 Save &amp; Print Labels</button></div></div>';
+    '<div class="msbtns"><button class="mb" id="nw">New</button><button class="mb" id="up">📄 Upload bill (Excel / CSV / photo)</button><span class="sp"></span><button class="mb" id="sv">💾 Save &amp; Print Labels</button></div></div>';
   /* prices: same as the last lot of this medicine, else a guess from the MRP */
   function prices(l, it) { var last = d.lots.filter(function (x) { return x.itemId === it.id; }).pop(); l.mrp = last ? last.mrp : it.mrp; l.cost = last ? last.cost : PD.r2(it.mrp * 0.62); l.sell = last ? last.sell : PD.r2(it.mrp * 0.72); }
   function newLine() { return { itemId: '', hsn: '', batchNo: '', expiry: '', strips: '', free: '', cost: '', disc: 0, tax: d.settings.defaultTax || 0, sell: '', mrp: '' }; }
@@ -61,8 +61,18 @@ PD.views.wadd = { render: function (host) {
   $('#nw', host).onclick = function () { PD.views.wadd.render(host); };
   $('#up', host).onclick = function () {
     var i = document.createElement('input'); i.type = 'file'; i.accept = '.csv,.xls,.xlsx,.xlsm,.ods,.txt';
+    i.accept += ',image/*';
     i.onchange = function () {
       var f = i.files[0]; if (!f) return;
+      if (/^image\//.test(f.type)) {
+        PD.toast('Reading the photo... this takes about a minute');
+        svc.wReadBillPhoto(f, function (m) { PD.toast(m); }).then(function (rows) {
+          var res = svc.wParseBill(rows);
+          grid.setLines(grid.lines().filter(function (l) { return l.itemId || l.newName; }).concat(res.lines));
+          PD.toast(res.lines.length + ' lines read from the photo' + (rows.bad ? ' • ' + rows.bad + ' line(s) could not be read, add them by hand' : '') + '. A photo can misread numbers: compare every line with the bill before Save.', 'ok');
+        }).catch(function (e) { PD.err(e); });
+        return;
+      }
       if (!window.XLSX) { PD.err(new Error('The Excel reader did not load. Check the internet connection and refresh the page.')); return; }
       var rd = new FileReader();
       rd.onload = function () {

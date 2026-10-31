@@ -182,6 +182,40 @@ svc.wParseBill = function (rows) {
   if (!out.length) throw new Error('No medicine rows with a quantity were found below the heading row.');
   return { lines: out, skipped: skipped, fresh: out.filter(function (l) { return !l.itemId; }).length };
 };
+/* ---------- bill photo: OCR in the browser (Tesseract.js, loaded on first use) ---------- */
+function loadTess() {
+  if (window.Tesseract) return Promise.resolve(window.Tesseract);
+  return new Promise(function (ok, no) { var s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js'; s.onload = function () { ok(window.Tesseract); }; s.onerror = function () { no(new Error('Could not load the photo reader. Check the internet connection.')); }; document.head.appendChild(s); });
+}
+function rotated(img, deg, maxW) {
+  var sc = Math.min(1, maxW / Math.max(img.width, img.height)), w = Math.round(img.width * sc), h = Math.round(img.height * sc), c = document.createElement('canvas'), q = deg % 180 !== 0;
+  c.width = q ? h : w; c.height = q ? w : h; var x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); x.translate(c.width / 2, c.height / 2); x.rotate(deg * Math.PI / 180); x.drawImage(img, -w / 2, -h / 2, w, h); return c;
+}
+/* text lines of a printed bill -> sheet rows for wParseBill */
+svc.wBillTextToRows = function (text) {
+  var rows = [['Qty', 'Free', 'Product Name', 'Batch', 'Exp', 'HSN', 'MRP', 'Rate', 'GST']], re = /(?:^|\s)(\d+(?:\.\d+)?)\s+(\d+)\s+(.+?)\s+([A-Za-z0-9\-\/]{3,})\s+(\d{1,2}\s*[-\/]\s*\d{4})\s+(\d{4,8})\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)\s+\d+\s*[*xX]\s*\d+\s+(\d+(?:\.\d+)?)\s+[\d,]+\.?\d*\s*$/;
+  var bad = 0;
+  String(text).split(/\r?\n/).forEach(function (ln) {
+    ln = ln.replace(/[|_~]/g, ' ').replace(/\s+/g, ' ').trim(); if (ln.length < 15) return;
+    var m = ln.replace(/^\d+\s*[.,]\s*/, '').match(re);
+    if (m) rows.push([m[1], m[2], m[3].replace(/[^\w\s.\-\/()%+]/g, '').trim(), m[4], m[5].replace(/\s+/g, ''), m[6], m[7].replace(/,/g, ''), m[8].replace(/,/g, ''), m[9]]);
+    else if (/\d{1,2}\s*[-\/]\s*20\d\d/.test(ln)) bad++;
+  });
+  rows.bad = bad; return rows;
+};
+svc.wReadBillPhoto = function (file, progress) {
+  progress = progress || function () {};
+  return loadTess().then(function (T) {
+    return new Promise(function (ok, no) { var img = new Image(); img.onload = function () { ok(img); }; img.onerror = function () { no(new Error('Could not open this picture')); }; img.src = URL.createObjectURL(file); }).then(function (img) {
+      progress('Finding the right way up...');
+      return T.createWorker('eng').then(function (w) {
+        var best = { deg: 0, conf: -1 }, seq = Promise.resolve();
+        [0, 90, 180, 270].forEach(function (deg) { seq = seq.then(function () { return w.recognize(rotated(img, deg, 700)).then(function (r) { var c = r.data.confidence; if (c > best.conf) best = { deg: deg, conf: c }; }); }); });
+        return seq.then(function () { progress('Reading the bill...'); return w.recognize(rotated(img, best.deg, 2200)); }).then(function (r) { return w.terminate().then(function () { return r.data.text; }); });
+      });
+    });
+  }).then(function (text) { var rows = svc.wBillTextToRows(text); if (rows.length < 2) throw new Error('No bill lines could be read from this picture. Take a straighter, brighter photo, or use the Excel bill.'); return rows; });
+};
 /* find a medicine by name, or create it (new ones go on the "NEW" shelf until the shelf is set) */
 svc.wEnsureItem = function (l) {
   var key = function (s) { return String(s || '').toLowerCase().replace(/\s+/g, ' ').trim(); }, nm = String(l.newName || '').trim().replace(/\s+/g, ' ');
