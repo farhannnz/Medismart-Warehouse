@@ -16,22 +16,25 @@ PD.views.wadd = { render: function (host) {
   var d = D(), grid;
   host.innerHTML = '<div class="msw pw">' + band('Add Stock - goods received in the warehouse') + '<div class="subtab"><span>Goods Received</span></div>' +
     '<div class="phead"><fieldset><legend>Receipt Details</legend>' + field('Date :', '<input class="in" readonly value="' + PD.fmtDate(PD.today()) + '">') + field('Supplier :', '<input class="in" id="sup" list="suplist" placeholder="who sent the goods" autocomplete="off"><datalist id="suplist">' + d.suppliers.filter(function (s) { return s.active !== false; }).map(function (s) { return '<option value="' + esc(s.name) + '">'; }).join('') + '</datalist>') + field('Bill no :', '<input class="in" id="bill">') + field('Payment :', '<select class="in" id="pay"><option value="credit">On credit (pay the supplier later)</option><option value="cash">Paid in cash</option><option value="bank">Paid by bank / UPI</option></select>') + '</fieldset>' +
-    '<fieldset class="sd"><legend>How this works</legend><div class="pf wide"><span class="hint">1. Search the medicine (it must already be created under Items). 2. Enter batch, expiry, number of strips and the prices. 3. Save: every strip gets its own barcode label. Print the labels and stick one on each strip. The shelf is shown so the stock goes to the right place.</span></div></fieldset></div>' +
+    '<fieldset class="sd"><legend>How this works</legend><div class="pf wide"><span class="hint">1. Search the medicine, or press <b>Upload bill</b> to read an Excel / CSV bill (medicines not in Items are created automatically). 2. Check HSN, batch, expiry, qty, free, rate, discount and GST. 3. Save: every strip gets its own barcode label. Print the labels and stick one on each strip. The shelf is shown so the stock goes to the right place.</span></div></fieldset></div>' +
     '<div class="scanbox" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 10px"><label><b>Scan barcode:</b></label><input class="in" id="bscan" autocomplete="off" placeholder="click here, then scan the barcode / QR on the medicine box or strip" style="font-size:15px;flex:1;min-width:240px"><span id="bfb" class="fb hint">Each scan adds 1 strip. Batch and expiry fill in by themselves when the code has them (2D / QR codes).</span></div>' +
     '<div class="pgrid" id="gr"></div>' +
-    '<div class="msbot"><div class="mspanel"><div class="subtabs"><span class="on">&nbsp;&nbsp;.&nbsp;&nbsp;</span></div><div class="mspb"><div class="r3"><label>Lines :</label><b id="ic">0</b><label>Strips :</label><b id="is">0</b></div></div></div><div class="mstot"><div class="tl"><label>At cost :</label><input class="in" id="t1" readonly value="0.00"></div><div class="tl"><label>At shop price :</label><input class="in" id="t2" readonly value="0.00"></div><div class="net"><span>Margin :</span><b id="t3">0.00</b></div></div></div>' +
-    '<div class="msbtns"><button class="mb" id="nw">New</button><span class="sp"></span><button class="mb" id="sv">💾 Save &amp; Print Labels</button></div></div>';
+    '<div class="msbot"><div class="mspanel"><div class="subtabs"><span class="on">&nbsp;&nbsp;.&nbsp;&nbsp;</span></div><div class="mspb"><div class="r3"><label>Lines :</label><b id="ic">0</b><label>Strips :</label><b id="is">0</b></div></div></div><div class="mstot"><div class="tl"><label>Total :</label><input class="in" id="t1" readonly value="0.00"></div><div class="tl"><label>GST :</label><input class="in" id="t2" readonly value="0.00"></div><div class="tl"><label>Margin :</label><input class="in" id="t4" readonly value="0.00"></div><div class="net"><span>Net Total :</span><b id="t3">0.00</b></div></div></div>' +
+    '<div class="msbtns"><button class="mb" id="nw">New</button><button class="mb" id="up">📄 Upload bill (Excel / CSV)</button><span class="sp"></span><button class="mb" id="sv">💾 Save &amp; Print Labels</button></div></div>';
   /* prices: same as the last lot of this medicine, else a guess from the MRP */
   function prices(l, it) { var last = d.lots.filter(function (x) { return x.itemId === it.id; }).pop(); l.mrp = last ? last.mrp : it.mrp; l.cost = last ? last.cost : PD.r2(it.mrp * 0.62); l.sell = last ? last.sell : PD.r2(it.mrp * 0.72); }
-  function newLine() { return { itemId: '', batchNo: '', expiry: '', strips: '', cost: '', sell: '', mrp: '' }; }
+  function newLine() { return { itemId: '', hsn: '', batchNo: '', expiry: '', strips: '', free: '', cost: '', disc: 0, tax: d.settings.defaultTax || 0, sell: '', mrp: '' }; }
+  /* keep "this strip costs / sells at" in step with the purchase price entered on the bill */
+  function onItem(l, it) { prices(l, it); l.newName = ''; l.hsn = it.hsn || ''; l.tax = it.tax || 0; l.disc = 0; }
   grid = PD.grid($('#gr', host), { id: 'wadd-grid', newLine: newLine,
-    cols: [{ k: 'item', label: 'Medicine', type: 'item', always: true }, { k: 'batchNo', label: 'Batch no.', w: 90 }, { k: 'expiry', label: 'Expiry', type: 'month', w: 120 }, { k: 'strips', label: 'No. of strips', type: 'number', align: 'r', w: 80 },
-      { k: 'cost', label: 'Purchase price / strip', type: 'number', align: 'r', w: 92 }, { k: 'sell', label: 'Selling price to shop / strip', type: 'number', align: 'r', w: 100 }, { k: 'mrp', label: 'MRP / strip', type: 'number', align: 'r', w: 78 },
+    cols: [{ k: 'item', label: 'Medicine', type: 'item', always: true }, { k: 'hsn', label: 'HSN', w: 70 }, { k: 'batchNo', label: 'Batch no.', w: 90 }, { k: 'expiry', label: 'Expiry', type: 'month', w: 120 }, { k: 'strips', label: 'Qty (strips)', type: 'number', align: 'r', w: 70 }, { k: 'free', label: 'Free', type: 'number', align: 'r', w: 55 },
+      { k: 'cost', label: 'Rate / strip', type: 'number', align: 'r', w: 85 }, { k: 'disc', label: 'Disc %', type: 'number', align: 'r', w: 55 }, { k: 'tax', label: 'GST %', type: 'number', align: 'r', w: 55 }, { k: 'sell', label: 'Selling price to shop / strip', type: 'number', align: 'r', w: 100 }, { k: 'mrp', label: 'MRP / strip', type: 'number', align: 'r', w: 78 },
+      { k: 'amt', label: 'Amount (incl. GST)', type: 'calc', align: 'r', calc: function (l) { return PD.n2(svc.wCalcLine(l).amount); } },
       { k: 'shelf', label: 'Shelf', type: 'calc', calc: function (l) { return l.itemId ? (svc.item(l.itemId).rack || '—') : ''; } }, { k: 'del', type: 'del', always: true }],
-    onItem: prices,
-    hint: function (l) { if (!l.itemId) return ''; var it = svc.item(l.itemId); return '<b>' + esc(it.name) + '</b> • shelf <b>' + esc(it.rack || 'NOT SET') + '</b> • in warehouse now <b>' + svc.wStock(it.id) + '</b> strips • reorder level ' + it.reorder; },
+    onItem: onItem,
+    hint: function (l) { if (!l.itemId) return l.newName ? '<span class="badge warn">NEW medicine</span> <b>' + esc(l.newName) + '</b> is not in Items yet. It will be created when you save (shelf "NEW" until you set one).' : ''; var it = svc.item(l.itemId); return '<b>' + esc(it.name) + '</b> • shelf <b>' + esc(it.rack || 'NOT SET') + '</b> • in warehouse now <b>' + svc.wStock(it.id) + '</b> strips • reorder level ' + it.reorder; },
     itemFilter: null,
-    onChange: function (ls) { var n = 0, s = 0, c = 0, p = 0; ls.forEach(function (l) { if (l.itemId) { n++; s += PD.num(l.strips); c += PD.num(l.strips) * PD.num(l.cost); p += PD.num(l.strips) * PD.num(l.sell); } }); var a = $('#ic', host); if (!a) return; a.textContent = n; $('#is', host).textContent = s; $('#t1', host).value = PD.n2(c); $('#t2', host).value = PD.n2(p); $('#t3', host).textContent = PD.n2(p - c); } });
+    onChange: function (ls) { var n = 0, s = 0, t = 0, x = 0, p = 0; ls.forEach(function (l) { if (l.itemId || l.newName) { var c = svc.wCalcLine(l); n++; s += c.n; t += c.taxable; x += c.taxAmt; p += c.n * PD.num(l.sell); } }); var a = $('#ic', host); if (!a) return; a.textContent = n; $('#is', host).textContent = s; $('#t1', host).value = PD.n2(t); $('#t2', host).value = PD.n2(x); $('#t3', host).textContent = PD.n2(t + x); $('#t4', host).value = PD.n2(p - t); } });
   grid.addLine(false);
   var bscan = $('#bscan', host), bfb = $('#bfb', host);
   function say(ok, msg) { beep(ok); bfb.innerHTML = '<span style="color:' + (ok ? '#2e8b57' : '#c62828') + '">' + (ok ? '✔ ' : '✖ ') + msg + '</span>'; bscan.focus(); }
@@ -56,6 +59,25 @@ PD.views.wadd = { render: function (host) {
   });
   setTimeout(function () { bscan.focus(); }, 50);
   $('#nw', host).onclick = function () { PD.views.wadd.render(host); };
+  $('#up', host).onclick = function () {
+    var i = document.createElement('input'); i.type = 'file'; i.accept = '.csv,.xls,.xlsx,.xlsm,.ods,.txt';
+    i.onchange = function () {
+      var f = i.files[0]; if (!f) return;
+      if (!window.XLSX) { PD.err(new Error('The Excel reader did not load. Check the internet connection and refresh the page.')); return; }
+      var rd = new FileReader();
+      rd.onload = function () {
+        try {
+          var wb = XLSX.read(rd.result, { type: 'array', cellDates: false }), ws = wb.Sheets[wb.SheetNames[0]];
+          var res = svc.wParseBill(XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' }));
+          var keep = grid.lines().filter(function (l) { return l.itemId || l.newName; });
+          grid.setLines(keep.concat(res.lines));
+          PD.toast(res.lines.length + ' lines read from ' + f.name + (res.fresh ? ' • ' + res.fresh + ' new medicine(s) will be created' : '') + (res.skipped ? ' • ' + res.skipped + ' rows skipped' : '') + '. Check them, then Save.', 'ok');
+        } catch (e) { PD.err(e); }
+      };
+      rd.readAsArrayBuffer(f);
+    };
+    i.click();
+  };
   $('#sv', host).onclick = function () {
     try {
       var lots = svc.wAddStock(grid.lines(), { supplier: $('#sup', host).value, bill: $('#bill', host).value, pay: $('#pay', host).value });

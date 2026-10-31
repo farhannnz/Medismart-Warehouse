@@ -12,7 +12,7 @@ PD.grid = function (host, cfg) {
     return all.filter(function (c) { return c.always || hid.indexOf(c.k) < 0; });
   }
   function cell(c, l, i) {
-    if (c.type === 'item') return '<input class="in sm" data-item="' + i + '" value="' + esc(l.itemId ? svc.itemName(l.itemId) : '') + '" placeholder="Search item (name / generic)..." style="min-width:230px" autocomplete="off">';
+    if (c.type === 'item') return '<input class="in sm" data-item="' + i + '" value="' + esc(l.itemId ? svc.itemName(l.itemId) : (l.newName || '')) + '" placeholder="Search item (name / generic)..." style="min-width:230px" autocomplete="off">';
     if (c.type === 'calc') return '<b data-calc="' + c.k + '" data-r="' + i + '">' + c.calc(l, i) + '</b>';
     if (c.type === 'del') return '<button class="btn sm g" data-del="' + i + '">' + PD.icon('x') + '</button>';
     if (c.type === 'select') { var o = (typeof c.options === 'function' ? c.options(l) : c.options); return '<select class="in sm" data-k="' + c.k + '" data-r="' + i + '" style="min-width:' + (c.w || 90) + 'px">' + o.map(function (x) { x = Array.isArray(x) ? x : [x, x]; return '<option value="' + esc(x[0]) + '"' + (String(x[0]) === String(l[c.k]) ? ' selected' : '') + '>' + esc(x[1]) + '</option>'; }).join('') + '</select>'; }
