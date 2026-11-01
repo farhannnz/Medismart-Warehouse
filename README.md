@@ -18,6 +18,9 @@ Data is saved online (Firebase); requests, dispatches and returns reach the shop
 ## Sale to other parties (not only shops)
 **Shops → Sale Bill to Other Parties**: pick a party (hospital, doctor, retailer, or Cash sale for walk-ins; **+ New party** adds one with GSTIN and credit terms), scan strips or search a medicine and choose the batch, change rate / discount if needed, tick **Charge GST**, choose Cash / UPI / On credit and save: the bill prints as a tax invoice, strips leave stock, the sale and a receipt post to Accounts. **Sale Register** lists the bills and takes returns. Outstanding, ageing, GSTR-1, HSN and margin reports in Books & Finance include these bills.
 
+## Stock control & compliance (Stock menu)
+**Item Ledger** (stock card per medicine), **Re-order Planner** (what to buy and from whom, from recent selling speed), **Hold / Ban Batches** (blocked batches cannot be sent or sold), **Physical Stock Count** (type the counted strips, compare, write off shortages), **Return to Supplier** (expired / damaged strips go back with a debit note that reduces the supplier's payable), **Schedule H / H1 / X Register** (who got which scheduled drug, with the party's drug licence number). Alerts also warn about parties over their credit limit, cheques due and blocked batches.
+
 ## Strip barcode
 Code 128 barcode that holds just the strip code, e.g. `L12-045`, printed with the item name, expiry, batch and MRP. The purchase price is never printed. The dispatch file carries the details of every strip code, so the shop software knows what each code is.
 

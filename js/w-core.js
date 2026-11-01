@@ -306,6 +306,7 @@ svc.wPickScan = function (reqId, text) {
   var p = svc.wParse(text); if (!p) return { ok: false, msg: 'Not a Medismart strip code: ' + String(text).slice(0, 40) };
   if (!p.lot || p.bad) return { ok: false, msg: 'Unknown strip ' + p.serial + ' (not in this warehouse)' };
   var g = p.lot.gone[p.idx]; if (g) return { ok: false, msg: p.serial + ' is not in stock (' + (g.s === 'out' ? 'already sent to ' + (g.shop || 'a shop') + ' on ' + g.ref : g.s === 'bad' ? 'written off' : g.s) + ')' };
+  if (p.lot.block) return { ok: false, msg: svc.itemName(p.lot.itemId) + ' batch ' + p.lot.batchNo + ' is on ' + p.lot.block + (p.lot.blockWhy ? ' (' + p.lot.blockWhy + ')' : '') + ' and cannot be sent' };
   if (r.picked.indexOf(p.serial) >= 0) return { ok: false, msg: p.serial + ' is already scanned for this request' };
   var line = r.lines.filter(function (l) { return l.itemId === p.lot.itemId; });
   if (!line.length) return { ok: false, msg: svc.itemName(p.lot.itemId) + ' was not asked for in this request' };
@@ -326,6 +327,7 @@ svc.wPickLot = function (reqId, lotId, qty) {
   if (!want) throw new Error(svc.itemName(lot.itemId) + ' was not asked for in this request');
   var need = want - svc.wPickedCount(r, lot.itemId) - svc.wDoneCount(r, lot.itemId); qty = Math.floor(PD.num(qty));
   if (!(qty > 0)) throw new Error('Enter how many strips'); if (qty > need) throw new Error('Only ' + need + ' more strips of ' + svc.itemName(lot.itemId) + ' are needed');
+  if (lot.block) throw new Error('Batch ' + lot.batchNo + ' is on ' + lot.block + (lot.blockWhy ? ' (' + lot.blockWhy + ')' : '') + ' and cannot be sent');
   var n = 0;
   for (var i = 1; i <= lot.n && n < qty; i++) { if (lot.gone[i]) continue; var sr = svc.wSerial(lot, i); if (r.picked.indexOf(sr) >= 0) continue; r.picked.push(sr); n++; }
   if (n < qty) throw new Error('Batch ' + lot.batchNo + ' has only ' + n + ' free strips');

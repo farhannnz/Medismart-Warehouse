@@ -4,7 +4,7 @@
 var PD = window.PD, esc = PD.esc, svc = PD.svc, $ = PD.$, $$ = PD.$$;
 
 var NAV = [
-  ['Stock', [['wadd', 'Add Stock', 'cart', 'F2'], ['wstock', 'Current Stock', 'box', 'F5'], ['wshelves', 'Shelves', 'box', ''], ['wscan', 'Strip Lookup', 'explore', 'F6']]],
+  ['Stock', [['wadd', 'Add Stock', 'cart', 'F2'], ['wstock', 'Current Stock', 'box', 'F5'], ['wshelves', 'Shelves', 'box', ''], ['wmore', 'Stock Control & Compliance', 'box', ''], ['wscan', 'Strip Lookup', 'explore', 'F6']]],
   ['Shops', [['wreq', 'Shop Requests (scan & dispatch)', 'order', 'F3'], ['wret', 'Returns from Shops', 'ret', 'F4'], ['wacc', 'Shop Accounts (udhaar)', 'rupee', 'F9'], ['wshops', 'Shops & Logins', 'users', ''], ['wsale', 'Sale Bill (other parties)', 'cart', ''], ['wpnl', 'Profit & Loss (all shops)', 'report', 'F8']]],
   ['Items', [['itemdlg', 'New / Edit Item', 'pill', '']]],
   ['Insights', [['wrep', 'Reports', 'report', 'F7'], ['accounts', 'Accounts', 'book', 'F10'], ['books', 'Books & Finance', 'rupee', '']]],
@@ -61,7 +61,8 @@ var MENUS = [
     ['New / Edit Item', 'itemdlg'], ['Manufacturers', 'masters', { tab: 'mfrs' }]]],
   ['Stock', [
     ['Add Stock (goods received)', 'wadd', null, 'F2'], ['Current Stock', 'wstock', null, 'F5'], ['Shelves', 'wshelves'], ['Strip Lookup (scan)', 'wscan', null, 'F6'], '-',
-    ['Lot-wise Stock', 'wrep', { report: 'lots' }], ['Expiry Report', 'wrep', { report: 'expiry' }], ['Low Stock', 'wrep', { report: 'low' }], ['Written-off Stock', 'wrep', { report: 'bad' }]]],
+    ['Lot-wise Stock', 'wrep', { report: 'lots' }], ['Expiry Report', 'wrep', { report: 'expiry' }], ['Low Stock', 'wrep', { report: 'low' }], ['Written-off Stock', 'wrep', { report: 'bad' }], '-',
+    ['Item Ledger', 'wmore', { tab: 'ledger' }], ['Re-order Planner', 'wmore', { tab: 'reorder' }], ['Hold / Ban Batches', 'wmore', { tab: 'block' }], ['Physical Stock Count', 'wmore', { tab: 'physical' }], ['Return to Supplier (debit note)', 'wmore', { tab: 'supret' }], ['Schedule H / H1 / X Register', 'wmore', { tab: 'sched' }]]],
   ['Shops', [
     ['Shop Accounts (udhaar)', 'wacc', null, 'F9'], ['Shops && Logins', 'wshops'], '-', ['Sale Bill to Other Parties', 'wsale'], ['Sale Register (other parties)', 'wsale', { tab: 'list' }], '-', ['Profit && Loss (all shops)', 'wpnl', null, 'F8'], '-',
     ['Shop Requests (scan & dispatch)', 'wreq', null, 'F3'], ['Dispatch History', 'wreq', { tab: 'hist' }], ['Returns from Shops', 'wret', null, 'F4'], '-',
@@ -85,8 +86,8 @@ var TOOLS = [
   ['New / edit item', 'pill', 'itemdlg', '#2f6fb3'], ['Reports (F7)', 'report', 'wrep', '#1e88a8'], ['Accounts (F10)', 'book', 'accounts', '#6a3fa0'], ['Books & finance', 'rupee', 'books', '#0d7a5f'], '|',
   ['Settings', 'gear', 'settings', '#666'], ['Log out', 'lock', 'logout', '#7a8a2e']
 ];
-var TITLES = {}; NAV.forEach(function (g) { g[1].forEach(function (i) { TITLES[i[0]] = i[1]; }); }); TITLES.home = 'Warehouse'; TITLES.books = 'Books & Finance'; TITLES.wsale = 'Sale Bill (other parties)'; TITLES.masters = 'Manufacturers'; TITLES.itemsexport = 'Item List for Shops'; TITLES.attendance = 'Attendance'; TITLES.shelves = 'Shelves'; TITLES.itemsimport = 'Import Item List'; TITLES.dnote = 'Delivery Note'; TITLES.batchedit = 'Batch Edit'; TITLES.expclaim = 'ExpiryClaim'; TITLES.itemdlg = 'Item'; TITLES.acctdlg = 'Account Details'; TITLES.request = 'Stock Request'; TITLES.reqlist = 'Request List'; TITLES.receive = 'Receive Stock'; TITLES.attendance = 'Attendance'; TITLES.custhist = 'Customer History';
-var RIGHT = { wsale: 'requests', books: 'accounts', accounts: 'accounts', acctdlg: 'accounts', wshops: 'shopsadmin', wpnl: 'reports', wacc: 'reports', wadd: 'addstock', wstock: 'stock', wshelves: 'stock', wscan: 'stock', wreq: 'requests', wret: 'returns', wrep: 'reports', itemdlg: 'items', itemsexport: 'items', masters: 'items', settings: 'users' };
+var TITLES = {}; NAV.forEach(function (g) { g[1].forEach(function (i) { TITLES[i[0]] = i[1]; }); }); TITLES.home = 'Warehouse'; TITLES.books = 'Books & Finance'; TITLES.wsale = 'Sale Bill (other parties)'; TITLES.wmore = 'Stock Control & Compliance'; TITLES.masters = 'Manufacturers'; TITLES.itemsexport = 'Item List for Shops'; TITLES.attendance = 'Attendance'; TITLES.shelves = 'Shelves'; TITLES.itemsimport = 'Import Item List'; TITLES.dnote = 'Delivery Note'; TITLES.batchedit = 'Batch Edit'; TITLES.expclaim = 'ExpiryClaim'; TITLES.itemdlg = 'Item'; TITLES.acctdlg = 'Account Details'; TITLES.request = 'Stock Request'; TITLES.reqlist = 'Request List'; TITLES.receive = 'Receive Stock'; TITLES.attendance = 'Attendance'; TITLES.custhist = 'Customer History';
+var RIGHT = { wmore: 'stock', wsale: 'requests', books: 'accounts', accounts: 'accounts', acctdlg: 'accounts', wshops: 'shopsadmin', wpnl: 'reports', wacc: 'reports', wadd: 'addstock', wstock: 'stock', wshelves: 'stock', wscan: 'stock', wreq: 'requests', wret: 'returns', wrep: 'reports', itemdlg: 'items', itemsexport: 'items', masters: 'items', settings: 'users' };
 var wins = [], cur = 'home', docks = { items: false, mfrs: false, sups: false, msg: true }, ui = { toolbar: true, status: true };
 PD.go = function (route, arg) { openWin(route, arg); };
 

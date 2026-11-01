@@ -21,6 +21,7 @@ svc.wSale = function (o) {
   o.lines.forEach(function (l) {
     var lot = D().lots.find(function (x) { return x.id === l.lotId; }), it = lot && svc.item(lot.itemId); if (!lot || !it) throw new Error('A batch is missing');
     if (!l.serials.length) return;
+    if (lot.block) throw new Error(it.name + ' batch ' + lot.batchNo + ' is on ' + lot.block + (lot.blockWhy ? ' (' + lot.blockWhy + ')' : '') + ' and cannot be sold');
     l.serials.forEach(function (sr) { var p = svc.wParse(sr); if (!p || p.lot !== lot || p.bad) throw new Error('Wrong strip ' + sr); if (lot.gone[p.idx]) throw new Error(sr + ' is no longer in stock'); if (seen[sr]) throw new Error(sr + ' is on the bill twice'); seen[sr] = 1; });
     var rate = PD.num(l.rate), disc = PD.num(l.disc); if (!(rate >= 0)) throw new Error('Enter the rate for ' + it.name); if (disc < 0 || disc > 100) throw new Error('Discount must be 0 to 100');
     var qty = l.serials.length, net = PD.r2(qty * rate * (1 - disc / 100)), t = o.gst ? PD.num(it.tax) : 0, tx = PD.r2(net * t / 100);
@@ -75,7 +76,7 @@ function saleHTML(s) {
 }
 
 function partyModal(done) {
-  var f = [{ k: 'name', label: 'Party name', req: true, full: true }, { k: 'phone', label: 'Phone' }, { k: 'gstin', label: 'GSTIN' }, { k: 'address', label: 'Address', full: true }, { k: 'creditLimit', label: 'Credit limit (0 = none)', type: 'number' }, { k: 'creditDays', label: 'Credit days', type: 'number' }];
+  var f = [{ k: 'name', label: 'Party name', req: true, full: true }, { k: 'phone', label: 'Phone' }, { k: 'gstin', label: 'GSTIN' }, { k: 'dl', label: 'Drug licence no.' }, { k: 'address', label: 'Address', full: true }, { k: 'creditLimit', label: 'Credit limit (0 = none)', type: 'number' }, { k: 'creditDays', label: 'Credit days', type: 'number' }];
   PD.modal({ title: 'New party (hospital, doctor, retailer...)', size: 'md', body: PD.formHTML(f, { creditDays: 30 }), foot: [{ label: 'Cancel' }, { label: 'Save', cls: 'p', fn: function (api) {
     try { var v = PD.readForm(api.body, f); v.gstin = String(v.gstin || '').toUpperCase(); v.active = true; var r = svc.saveMaster('customers', v); PD.toast('Party added', 'ok'); done(r.id); } catch (e) { PD.err(e); return false; }
   } }] });
@@ -140,6 +141,7 @@ PD.views.wsale = { render: function (host, arg) {
         if (!p) msg = '<span style="color:#c62828">✖ Not a Medismart strip code</span>';
         else if (!p.lot || p.bad) msg = '<span style="color:#c62828">✖ Unknown strip ' + esc(p.serial) + '</span>';
         else if (p.lot.gone[p.idx]) msg = '<span style="color:#c62828">✖ ' + esc(p.serial) + ' is not in stock</span>';
+        else if (p.lot.block) msg = '<span style="color:#c62828">✖ Batch is on ' + esc(p.lot.block) + ': cannot be sold</span>';
         else if (taken()[p.serial]) msg = '<span style="color:#c62828">✖ ' + esc(p.serial) + ' is already on the bill</span>';
         else { addLot(p.lot, [p.serial]); msg = '<span style="color:#2e8b57">✔ ' + esc(svc.itemName(p.lot.itemId)) + ' • ' + esc(p.serial) + '</span>'; }
         draw();
@@ -161,7 +163,7 @@ PD.views.wsale = { render: function (host, arg) {
       var it = svc.item(t.dataset.it), lots = svc.wLotsOf(it.id);
       var body = '<div class="tw"><table class="t"><thead><tr><th>Batch</th><th>Expiry</th><th class="r">MRP</th><th class="r">Shop price</th><th class="r">In stock</th><th class="r">Sell</th></tr></thead><tbody>' + lots.map(function (l) { var free = svc.wLeft(l) - cart.filter(function (c) { return c.lotId === l.id; }).reduce(function (a, c) { return a + c.serials.length; }, 0); return '<tr><td><b>' + esc(l.batchNo) + '</b></td><td>' + PD.fmtExp(l.expiry) + '</td><td class="r">' + PD.n2(l.mrp) + '</td><td class="r">' + PD.n2(l.sell || l.cost) + '</td><td class="r">' + free + '</td><td class="r"><input type="number" min="0" max="' + free + '" class="in sm" style="width:70px" data-q="' + l.id + '"' + (free > 0 ? '' : ' disabled') + '></td></tr>'; }).join('') + '</tbody></table></div><p class="hint">Earliest expiry is listed first.</p>';
       PD.modal({ title: it.name + ' — choose batch', size: 'lg', body: body, foot: [{ label: 'Cancel' }, { label: 'Add', cls: 'p', fn: function (api) {
-        try { var tot = 0, tk2 = taken(); PD.$$('[data-q]', api.body).forEach(function (inp) { var q = Math.floor(PD.num(inp.value)); if (q <= 0) return; var lot = D().lots.find(function (x) { return x.id === inp.dataset.q; }), s = freeSerials(lot, q, tk2); if (s.length < q) throw new Error('Batch ' + lot.batchNo + ' has only ' + s.length + ' free strips'); s.forEach(function (x) { tk2[x] = 1; }); addLot(lot, s); tot += q; });
+        try { var tot = 0, tk2 = taken(); PD.$$('[data-q]', api.body).forEach(function (inp) { var q = Math.floor(PD.num(inp.value)); if (q <= 0) return; var lot = D().lots.find(function (x) { return x.id === inp.dataset.q; }); if (lot.block) throw new Error('Batch ' + lot.batchNo + ' is on ' + lot.block + ' and cannot be sold'); var s = freeSerials(lot, q, tk2); if (s.length < q) throw new Error('Batch ' + lot.batchNo + ' has only ' + s.length + ' free strips'); s.forEach(function (x) { tk2[x] = 1; }); addLot(lot, s); tot += q; });
           if (!tot) throw new Error('Type a quantity against a batch'); hits = []; msg = '<span style="color:#2e8b57">✔ Added ' + tot + ' strips of ' + esc(it.name) + '</span>'; setTimeout(draw, 0);
         } catch (er) { PD.err(er); return false; }
       } }] });
