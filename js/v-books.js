@@ -127,10 +127,10 @@ function chequeActions(c, done) {
 PD.views.books = { render: function (host, arg) {
   var tab = (arg && arg.tab) || 'dash';
   D().cheques = D().cheques || []; D().bankRec = D().bankRec || {};
-  var TABS = [['dash', 'Dashboard'], ['cashbank', 'Cash / Bank book'], ['groupsum', 'Group summary'], ['ageing', 'Outstanding & ageing'], ['vouchers', 'Vouchers & notes'], ['cheques', 'Cheques (PDC)'], ['bankrec', 'Bank reconciliation'], ['cashflow', 'Receipts & payments'], ['monthly', 'Monthly P&L'], ['gst', 'GST reports'], ['opening', 'Opening balances']];
+  var TABS = [['dash', 'Dashboard'], ['cashbank', 'Cash / Bank book'], ['groupsum', 'Group summary'], ['ageing', 'Outstanding & ageing'], ['vouchers', 'Vouchers & notes'], ['cheques', 'Cheques (PDC)'], ['bankrec', 'Bank reconciliation'], ['cashflow', 'Receipts & payments'], ['monthly', 'Monthly P&L'], ['gst', 'GST reports'], ['analysis', 'Sales / purchase / profit'], ['dayclose', 'Cash day close'], ['audit', 'Audit checks'], ['opening', 'Opening balances']];
   host.innerHTML = '<div class="tabs" id="bt" style="margin-bottom:14px;flex-wrap:wrap">' + TABS.map(function (t) { return '<button data-t="' + t[0] + '" class="' + (t[0] === tab ? 'on' : '') + '">' + t[1] + '</button>'; }).join('') + '</div><div id="bc"></div>';
   var bc = $('#bc', host);
-  function show(t) { tab = t; PD.$$('#bt button', host).forEach(function (b) { b.classList.toggle('on', b.dataset.t === t); }); bc.innerHTML = ''; var pane = document.createElement('div'); bc.appendChild(pane); ({ dash: dash, cashbank: cashbank, groupsum: groupsum, ageing: ageing, vouchers: vouchers, cheques: cheques, bankrec: bankrec, cashflow: cashflow, monthly: monthly, gst: gst, opening: opening })[t](pane); }
+  function show(t) { tab = t; PD.$$('#bt button', host).forEach(function (b) { b.classList.toggle('on', b.dataset.t === t); }); bc.innerHTML = ''; var pane = document.createElement('div'); bc.appendChild(pane); ({ dash: dash, cashbank: cashbank, groupsum: groupsum, ageing: ageing, vouchers: vouchers, cheques: cheques, bankrec: bankrec, cashflow: cashflow, monthly: monthly, gst: gst, analysis: analysis, dayclose: dayclose, audit: audit, opening: opening })[t](pane); }
   PD.on($('#bt', host), 'click', 'button', function (e, b) { show(b.dataset.t); });
   function again() { show(tab); }
   function bar(el, html) { el.insertAdjacentHTML('beforeend', '<div class="row" style="margin-bottom:12px;gap:8px;flex-wrap:wrap">' + html + '</div>'); }
@@ -189,9 +189,13 @@ PD.views.books = { render: function (host, arg) {
           .concat(BUCKETS.map(function (b, i) { return amt('b' + i, b[2] + ' days'); })).concat([amt('advance', 'Advance / on account'), { k: 'net', label: 'Net outstanding', align: 'r', sum: true, fmt: function (v) { return '<b>' + PD.n2(v) + '</b>'; } }, amt('over', 'Overdue')]), rows: rows, note: 'Overdue = bills older than the credit days. Click a party for its open bills and to set credit limit and days.' };
       },
       drill: function (r, run) {
-        var asof = el.querySelector('[data-f="asof"]').value, f = [{ k: 'creditLimit', label: 'Credit limit (0 = none)', type: 'number' }, { k: 'creditDays', label: 'Credit days', type: 'number' }], rec = r.kind === 'cus' ? svc.customer(r.id) : svc.supplier(r.id);
+        var asof = el.querySelector('[data-f="asof"]').value, f = [{ k: 'creditLimit', label: 'Credit limit (0 = none)', type: 'number' }, { k: 'creditDays', label: 'Credit days', type: 'number' }, { k: 'phone', label: 'Phone / WhatsApp', full: true }], rec = r.kind === 'cus' ? svc.customer(r.id) : svc.supplier(r.id);
         var bl = '<table class="t"><thead><tr><th>Bill date</th><th class="r">Age (days)</th><th class="r">Pending</th></tr></thead><tbody>' + r.bills.map(function (b) { return '<tr><td>' + PD.fmtDate(b.d) + '</td><td class="r">' + days(b.d, asof) + '</td><td class="r">' + PD.n2(b.left) + '</td></tr>'; }).join('') + '</tbody></table>';
-        var foot = [{ label: 'Close' }, { label: 'Save limit & days', fn: function (api) { var v = PD.readForm(api.body, f); rec.creditLimit = v.creditLimit; rec.creditDays = v.creditDays; PD.save(); PD.toast('Saved'); run(); } }];
+        var foot = [{ label: 'Close' }, { label: 'Save limit & days', fn: function (api) { var v = PD.readForm(api.body, f); rec.creditLimit = v.creditLimit; rec.creditDays = v.creditDays; rec.phone = v.phone; PD.save(); PD.toast('Saved'); run(); } }];
+        if (r.kind === 'cus') foot.push({ label: 'WhatsApp reminder', fn: function (api) {
+          var ph = String(PD.readForm(api.body, f).phone || '').replace(/\D/g, ''); if (ph.length === 10) ph = '91' + ph; if (ph.length < 11) { PD.toast('Enter the shop phone number first', 'err'); return false; }
+          window.open('https://wa.me/' + ph + '?text=' + encodeURIComponent('Namaste ' + r.name + ', ' + D().shop.name + ' ka aapke paas Rs ' + PD.n2(r.net) + ' baaki hai' + (r.over > 0 ? ' (Rs ' + PD.n2(r.over) + ' due ho chuka hai)' : '') + '. Kripya payment kar dein. Dhanyavaad.'), '_blank'); return false;
+        } });
         if (PD.voucherModal) foot.push({ label: r.kind === 'cus' ? 'Receive payment' : 'Pay', cls: 'p', fn: function () { PD.voucherModal(r.kind === 'cus' ? 'receipt' : 'payment', { party: r.id, amount: Math.max(0, r.net) }, run); } });
         PD.modal({ title: r.name, size: 'md', body: '<h4 style="margin:0 0 6px">Open bills</h4>' + (r.bills.length ? bl : '<p class="mut">No pending bills.</p>') + (r.advance ? '<p class="hint">Advance / unadjusted: ' + PD.n2(r.advance) + '</p>' : '') + '<h4 style="margin:14px 0 6px">Credit terms</h4>' + PD.formHTML(f, rec || {}), foot: foot });
       } });
@@ -316,6 +320,79 @@ PD.views.books = { render: function (host, arg) {
       var s = 0; Object.keys(ob).forEach(function (a) { if (a !== 'capital') s += ob[a]; }); s = PD.r2(-s); if (s) ob.capital = s; else delete ob.capital;
       PD.log('Opening balances saved', fy.label); PD.save(); PD.toast('Opening balances saved. Capital set to ' + PD.n2(Math.abs(s)) + (s < 0 ? ' Dr' : ' Cr'), 'ok');
     };
+  }
+
+  /* ---------- shop-wise sales, supplier-wise purchases, item-wise gross profit ---------- */
+  function avgCost(itemId) { var q = 0, c = 0; D().wdisp.forEach(function (d) { if (!d.bill) return; d.lines.forEach(function (l) { if (l.itemId === itemId) { q += l.qty; c += l.qty * (l.cost || 0); } }); }); return q ? c / q : 0; }
+  function retCost(l) {
+    if (l.outcome !== 'stock') return 0; var c = 0, n = 0;
+    (l.serials || []).forEach(function (sr) { var p = svc.wParse(sr); if (p && p.lot) { c += p.lot.cost || 0; n++; } });
+    return PD.r2(c + Math.max(0, l.qty - n) * avgCost(l.itemId));
+  }
+  function analysis(el) {
+    PD.report(el, { id: 'anal', title: 'Sales, purchase and profit analysis', filters: [{ k: 'kind', label: 'Report', type: 'select', w: 250, options: [['shop', 'Shop-wise sales & margin'], ['item', 'Medicine-wise sales & gross profit'], ['sup', 'Supplier-wise purchases']], val: 'shop' }, { k: 'from', label: 'From', type: 'date', val: function () { return svc.currentYear().start; } }, { k: 'to', label: 'To', type: 'date', val: PD.today }],
+      load: function (f) {
+        var g = {}, rows;
+        function row(k, name) { return g[k] = g[k] || { name: name, qty: 0, sales: 0, ret: 0, cost: 0, retCost: 0, bills: 0 }; }
+        if (f.kind === 'sup') {
+          D().lots.forEach(function (l) { if (l.date < f.from || l.date > f.to) return; var nm = l.supplier || (l.supplierId ? svc.supName(l.supplierId) : '(direct / cash)'), o = g[nm] = g[nm] || { name: nm, lots: 0, qty: 0, val: 0 }; o.lots++; o.qty += l.n || 0; o.val += l.taxable != null ? (l.taxable || 0) + (l.taxAmt || 0) : (l.cost || 0) * (l.n || 0); });
+          rows = Object.keys(g).map(function (k) { g[k].val = PD.r2(g[k].val); return g[k]; }).sort(function (a, b) { return b.val - a.val; });
+          return { cols: [{ k: 'name', label: 'Supplier', fmt: bold }, { k: 'lots', label: 'Lots', align: 'r' }, { k: 'qty', label: 'Strips', align: 'r' }, amt('val', 'Purchase value (incl. GST)')], rows: rows };
+        }
+        D().wdisp.forEach(function (d) { if (!d.bill || d.date < f.from || d.date > f.to) return; d.lines.forEach(function (l) { var k = f.kind === 'shop' ? d.shopId : l.itemId, o = row(k, f.kind === 'shop' ? svc.wShopName(d.shopId) : svc.itemName(l.itemId)); o.qty += l.qty; o.sales += l.qty * l.rate; o.cost += l.qty * (l.cost || 0); }); if (f.kind === 'shop') row(d.shopId, svc.wShopName(d.shopId)).bills++; });
+        D().wret.forEach(function (r) { var dt = r.doneOn || r.date; if (r.status !== 'Accepted' || dt < f.from || dt > f.to) return; r.lines.forEach(function (l) { if (!l.credit) return; var k = f.kind === 'shop' ? r.shopId : l.itemId, o = row(k, f.kind === 'shop' ? svc.wShopName(r.shopId) : svc.itemName(l.itemId)); o.ret += l.qty * l.rate; o.retCost += retCost(l); }); });
+        rows = Object.keys(g).map(function (k) { var o = g[k]; o.sales = PD.r2(o.sales); o.ret = PD.r2(o.ret); o.cost = PD.r2(o.cost); o.retCost = PD.r2(o.retCost); o.net = PD.r2(o.sales - o.ret); o.margin = PD.r2(o.sales - o.ret - (o.cost - o.retCost)); o.pct = o.net ? PD.r2(o.margin * 100 / o.net) : 0; return o; }).sort(function (a, b) { return b.net - a.net; });
+        return { cols: [{ k: 'name', label: f.kind === 'shop' ? 'Shop' : 'Medicine', fmt: bold }].concat(f.kind === 'shop' ? [{ k: 'bills', label: 'Bills', align: 'r' }] : []).concat([{ k: 'qty', label: 'Strips sent', align: 'r' }, amt('sales', 'Sales'), amt('ret', 'Returns'), amt('net', 'Net sales'), amt('margin', 'Gross profit'), { k: 'pct', label: 'Margin %', align: 'r', fmt: function (v) { return v ? v + '%' : ''; } }]), rows: rows, note: 'Gross profit = net sales minus the purchase cost of the strips sent (stock that came back is not counted as cost).' };
+      } });
+  }
+
+  /* ---------- cash day close: count the drawer, post the difference ---------- */
+  function dayclose(el) {
+    D().dayClose = D().dayClose || []; var NOTES = [500, 200, 100, 50, 20, 10, 5, 2, 1];
+    el.innerHTML = '<div class="grid g2"><div class="card"><div class="hd"><h3 style="padding:0;border:0">Close the day</h3></div><div class="bd"><div class="form"><div class="fld"><label>Date</label><input type="date" class="in" id="dcd" value="' + PD.today() + '"></div><div class="fld"><label>Cash as per books</label><input class="in" id="dcb" readonly></div></div>' +
+      '<table class="t" style="margin-top:10px"><thead><tr><th>Note / coin</th><th class="r">Count</th><th class="r">Amount</th></tr></thead><tbody>' + NOTES.map(function (n) { return '<tr><td>₹ ' + n + '</td><td class="r"><input type="number" min="0" class="in sm" style="width:90px;text-align:right" data-dn="' + n + '"></td><td class="r" data-da="' + n + '">0.00</td></tr>'; }).join('') + '</tbody></table>' +
+      '<div class="form" style="margin-top:10px"><div class="fld"><label>Cash counted</label><input class="in" id="dcc" readonly></div><div class="fld"><label>Difference (counted − books)</label><input class="in" id="dcx" readonly></div><div class="fld full"><label>Note</label><input class="in" id="dcn"></div><div class="fld full"><label class="chk"><input type="checkbox" id="dcp" checked> Post the difference (shortage as expense, excess as other income)</label></div></div></div><div class="hd" style="border-top:1px solid var(--line)"><span class="sp"></span><button class="btn p" id="dcs">Save day close</button></div></div><div id="dch"></div></div>';
+    function calc() { var t = 0; NOTES.forEach(function (n) { var c = PD.num($('[data-dn="' + n + '"]', el).value); t += c * n; $('[data-da="' + n + '"]', el).textContent = PD.n2(c * n); }); var b = bookBal('cash', $('#dcd', el).value); $('#dcb', el).value = PD.n2(b); $('#dcc', el).value = PD.n2(t); $('#dcx', el).value = PD.n2(t - b); return { t: PD.r2(t), b: b }; }
+    el.addEventListener('input', calc); calc();
+    $('#dcs', el).onclick = function () {
+      try {
+        var d = $('#dcd', el).value, c = calc(), diff = PD.r2(c.t - c.b);
+        if (D().dayClose.some(function (x) { return x.date === d; })) throw new Error('This day is already closed. Delete its entry in the list to redo it.');
+        var rec = { id: PD.uid('dc'), date: d, book: c.b, counted: c.t, diff: diff, note: $('#dcn', el).value, by: PD.user ? PD.user.username : '', vch: '' };
+        if (diff && $('#dcp', el).checked) rec.vch = svc.voucher(d, 'Journal', 'Cash day close ' + (diff < 0 ? 'shortage' : 'excess'), diff < 0 ? [{ acc: 'expense', dr: -diff }, { acc: 'cash', cr: -diff }] : [{ acc: 'cash', dr: diff }, { acc: 'income', cr: diff }], { kind: 'manual' }).id;
+        D().dayClose.push(rec); PD.log('Day closed', d); PD.save(); PD.toast('Day closed' + (diff ? ' • difference ' + PD.n2(diff) : ' • cash matches'), 'ok'); hist(); calc();
+      } catch (e) { PD.err(e); }
+    };
+    function hist() {
+      PD.report($('#dch', el), { id: 'dayclose', title: 'Day close history', load: function () { return { cols: [{ k: 'date', label: 'Date', fmt: PD.fmtDate }, amt('book', 'Books'), amt('counted', 'Counted'), { k: 'diff', label: 'Difference', align: 'r', fmt: function (v) { return v ? '<b>' + PD.n2(v) + '</b>' : '<span class="badge ok">matched</span>'; } }, { k: 'by', label: 'By' }, { k: 'note', label: 'Note' }], rows: D().dayClose.slice().sort(function (a, b) { return b.date.localeCompare(a.date); }), note: 'Click an entry to delete it (its posted difference voucher is removed too).' }; },
+        drill: function (r, run) { PD.confirm('Delete the day close of ' + PD.fmtDate(r.date) + '?', 'Delete', true).then(function (ok) { if (!ok) return; try { if (r.vch) { var v = D().vouchers.find(function (x) { return x.id === r.vch; }); if (v) { var y = D().years.find(function (x) { return x.id === v.year; }); if (y && y.closed) throw new Error('That year is closed'); D().vouchers = D().vouchers.filter(function (x) { return x !== v; }); } } D().dayClose = D().dayClose.filter(function (x) { return x.id !== r.id; }); PD.save(); run(); calc(); } catch (e) { PD.err(e); } }); } });
+    }
+    hist();
+  }
+
+  /* ---------- audit / internal checks ---------- */
+  function audit(el) {
+    PD.report(el, { id: 'audit', title: 'Audit checks (internal check)', load: function () {
+      var today = PD.today(), out = [];
+      function add(name, list, hint) { out.push({ name: name, n: list.length, res: list.length ? 'bad' : 'ok', list: list, hint: hint }); }
+      var nos = D().vouchers.map(function (v) { return v.no; }).sort(function (a, b) { return a - b; }), gap = [], i;
+      for (i = 1; i < nos.length; i++) for (var m = nos[i - 1] + 1; m < nos[i] && gap.length < 50; m++) gap.push('Voucher #' + m + ' missing');
+      add('Missing voucher numbers (deleted or lost entries)', gap, 'Numbers skipped between the first and last voucher.');
+      add('Vouchers dated in the future', D().vouchers.filter(function (v) { return v.date > today; }).map(function (v) { return '#' + v.no + ' ' + v.type + ' ' + PD.fmtDate(v.date); }), 'Check the date typed.');
+      var unb = []; D().vouchers.forEach(function (v) { var d = 0, c = 0; v.lines.forEach(function (l) { d += l.dr; c += l.cr; }); if (Math.abs(d - c) > 0.01) unb.push('#' + v.no + ' Dr ' + PD.n2(d) + ' vs Cr ' + PD.n2(c)); });
+      add('Vouchers where debit and credit differ', unb, 'Should always be empty.');
+      ['cash', 'bank'].forEach(function (a) { var ev = []; D().vouchers.forEach(function (v) { v.lines.forEach(function (l) { if (l.acc === a) ev.push({ d: v.date, x: l.dr - l.cr }); }); }); ev.sort(function (p, q) { return p.d.localeCompare(q.d); }); var b = firstOb(a), neg = {}; ev.forEach(function (e) { b += e.x; if (b < -0.5) neg[e.d] = PD.r2(b); }); add(svc.accName(a) + ' went negative', Object.keys(neg).slice(0, 50).map(function (d) { return PD.fmtDate(d) + ': ' + PD.n2(neg[d]); }), 'Money paid out before it was recorded as received.'); });
+      var ar = ageRows('cus', today);
+      add('Shops over their credit limit', ar.filter(function (r) { return r.flag === 'Over limit'; }).map(function (r) { return r.name + ': ' + PD.n2(r.net) + ' (limit ' + PD.n2(r.limit) + ')'; }), 'Set under Outstanding & ageing.');
+      add('Shops with advance / credit balance', ar.filter(function (r) { return r.advance > 0.5; }).map(function (r) { return r.name + ': advance ' + PD.n2(r.advance); }), 'Payment received but not yet matched with bills.');
+      add('Stock lots sold below purchase cost', D().lots.filter(function (l) { return l.sell > 0 && l.cost > 0 && l.sell < l.cost && svc.wLeft(l) > 0; }).slice(0, 60).map(function (l) { return svc.itemName(l.itemId) + ' batch ' + l.batchNo + ': cost ' + PD.n2(l.cost) + ', shop price ' + PD.n2(l.sell); }), 'Shop price lower than what you paid.');
+      add('Stock lots priced above MRP', D().lots.filter(function (l) { return l.mrp > 0 && (l.sell > l.mrp || l.cost > l.mrp) && svc.wLeft(l) > 0; }).slice(0, 60).map(function (l) { return svc.itemName(l.itemId) + ' batch ' + l.batchNo + ': MRP ' + PD.n2(l.mrp) + ', cost ' + PD.n2(l.cost) + ', shop price ' + PD.n2(l.sell); }), 'Likely a typing mistake in Add Stock.');
+      add('Medicines in stock with no shelf', D().items.filter(function (it) { return !it.rack && svc.wStock(it.id) > 0; }).slice(0, 60).map(function (it) { return it.name; }), 'Give them a shelf under Items.');
+      add('Pending cheques past their date', D().cheques.filter(function (c) { return c.status === 'pending' && c.date < today; }).map(function (c) { return (c.dir === 'in' ? 'Received ' : 'Issued ') + c.no + ' ' + svc.accName(c.party) + ' ' + PD.n2(c.amount) + ' dated ' + PD.fmtDate(c.date); }), 'Deposit or mark them.');
+      var B = svc.balances(svc.currentYear().id), td = 0, tc = 0; D().accounts.forEach(function (a) { var b = B[a.id]; if (!b) return; var n = svc.accNet(b); if (n > 0) td += n; else tc -= n; });
+      add('Trial balance difference (this year)', Math.abs(td - tc) > 1 ? ['Debit ' + PD.n2(td) + ' vs Credit ' + PD.n2(tc)] : [], 'Opening balances not set through the Opening balances tab can cause this.');
+      return { cols: [{ k: 'res', label: 'Result', fmt: function (v, r) { return v === 'ok' ? '<span class="badge ok">OK</span>' : '<span class="badge bad">' + r.n + ' found</span>'; } }, { k: 'name', label: 'Check', fmt: bold }, { k: 'hint', label: 'What it means' }], rows: out, note: 'Click a check to see the entries.' };
+    }, drill: function (r) { PD.modal({ title: r.name, size: 'md', body: r.list.length ? '<table class="t"><tbody>' + r.list.map(function (x) { return '<tr><td>' + esc(x) + '</td></tr>'; }).join('') + '</tbody></table>' : '<p class="mut">Nothing to fix.</p>', foot: [{ label: 'Close' }] }); } });
   }
   show(tab);
 } };
