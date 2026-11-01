@@ -57,13 +57,18 @@ PD.books = { bookBal: bookBal, openBills: openBills, ageRows: ageRows, days: day
 function outward(from, to) {
   var rows = [];
   function add(type, d, no, shopId, g) {
-    var c = svc.customer(shopId) || {};
-    Object.keys(g).forEach(function (r) { var sg = type === 'Credit note' ? -1 : 1, o = g[r]; rows.push({ type: type, date: d, no: no, shop: svc.wShopName(shopId), gstin: c.gstin || '', cls: c.gstin ? 'B2B' : 'Unregistered', gst: o.gst, rate: +r, taxable: PD.r2(sg * o.taxable), tax: PD.r2(sg * o.tax) }); });
+    var c = svc.customer(shopId) || {}, nm = svc.wShop(shopId) ? svc.wShopName(shopId) : svc.cusName(shopId);
+    Object.keys(g).forEach(function (r) { var sg = type === 'Credit note' ? -1 : 1, o = g[r]; rows.push({ type: type, date: d, no: no, shop: nm, gstin: c.gstin || '', cls: c.gstin ? 'B2B' : 'Unregistered', gst: o.gst, rate: +r, taxable: PD.r2(sg * o.taxable), tax: PD.r2(sg * o.tax) }); });
   }
   D().wdisp.forEach(function (d) {
     if (!d.bill || d.date < from || d.date > to) return; var g = {};
     d.lines.forEach(function (l) { var r = d.gst ? PD.num(l.tax) : 0, o = g[r] = g[r] || { taxable: 0, tax: 0, gst: !!d.gst }; o.taxable += l.qty * l.rate; o.tax += d.gst ? l.qty * l.rate * r / 100 : 0; });
     add('Invoice', d.date, d.no, d.shopId, g);
+  });
+  (D().wsales || []).forEach(function (s) {
+    var g = {};
+    if (s.date >= from && s.date <= to) { s.lines.forEach(function (l) { var r = s.gst ? PD.num(l.tax) : 0, o = g[r] = g[r] || { taxable: 0, tax: 0, gst: !!s.gst }; o.taxable += l.net; o.tax += l.taxAmt || 0; }); add('Invoice', s.date, s.no, s.partyId, g); }
+    (s.returns || []).forEach(function (x) { if (x.date < from || x.date > to) return; var h = {}; x.lines.forEach(function (rl) { var l = s.lines[rl.i], r = s.gst ? PD.num(l.tax) : 0, o = h[r] = h[r] || { taxable: 0, tax: 0, gst: !!s.gst }; o.taxable += rl.taxable; o.tax += rl.tax; }); add('Credit note', x.date, x.no, s.partyId, h); });
   });
   D().wret.forEach(function (r) {
     var dt = r.doneOn || r.date; if (r.status !== 'Accepted' || dt < from || dt > to) return; var g = {};
@@ -317,6 +322,7 @@ PD.views.books = { render: function (host, arg) {
         if (f.kind === 'gstr1') return { cols: [{ k: 'type', label: 'Type', fmt: function (v) { return '<span class="badge ' + (v === 'Invoice' ? 'brand' : 'warn') + '">' + v + '</span>'; } }, { k: 'date', label: 'Date', fmt: PD.fmtDate }, { k: 'no', label: 'No.' }, { k: 'shop', label: 'Shop', fmt: bold }, { k: 'gstin', label: 'GSTIN' }, { k: 'cls', label: 'Class' }, { k: 'rate', label: 'Rate %', align: 'r' }].concat(OC), rows: outward(f.from, f.to), note: 'Credit notes are the accepted returns of billed stock (shown negative). Set each shop\'s GSTIN under Outstanding & ageing → click the shop.' };
         if (f.kind === 'hsnout') {
           var hg = {}; D().wdisp.forEach(function (d) { if (!d.bill || d.date < f.from || d.date > f.to) return; d.lines.forEach(function (l) { var it = svc.item(l.itemId) || {}, rt = d.gst ? PD.num(l.tax) : 0, k = (it.hsn || '') + '|' + rt, o = hg[k] = hg[k] || { name: (it.hsn || 'No HSN') + ' @ ' + rt + '%', qty: 0, taxable: 0, tax: 0 }; o.qty += l.qty; o.taxable += l.qty * l.rate; o.tax += d.gst ? l.qty * l.rate * rt / 100 : 0; }); });
+          (D().wsales || []).forEach(function (s) { if (s.date < f.from || s.date > f.to) return; s.lines.forEach(function (l) { var rt = s.gst ? PD.num(l.tax) : 0, k = (l.hsn || '') + '|' + rt, o = hg[k] = hg[k] || { name: (l.hsn || 'No HSN') + ' @ ' + rt + '%', qty: 0, taxable: 0, tax: 0 }; o.qty += l.qty; o.taxable += l.net; o.tax += l.taxAmt || 0; }); });
           return { cols: [{ k: 'name', label: 'HSN / rate', fmt: bold }, amt('qty', 'Strips')].concat(OC), rows: Object.keys(hg).sort().map(function (k) { var o = hg[k]; o.taxable = PD.r2(o.taxable); o.cgst = PD.r2(o.tax / 2); o.sgst = PD.r2(o.tax / 2); o.total = PD.r2(o.taxable + o.tax); return o; }) };
         }
         if (f.kind === 'rate') return { cols: [{ k: 'name', label: 'GST rate', fmt: bold }].concat(tcols), rows: grp(function (l) { return l.tax || 0; }, function (l) { return (l.tax || 0) + '%'; }), note: 'Intra-state supplies assumed: tax split half CGST, half SGST.' };
@@ -358,7 +364,7 @@ PD.views.books = { render: function (host, arg) {
     return PD.r2(c + Math.max(0, l.qty - n) * avgCost(l.itemId));
   }
   function analysis(el) {
-    PD.report(el, { id: 'anal', title: 'Sales, purchase and profit analysis', filters: [{ k: 'kind', label: 'Report', type: 'select', w: 250, options: [['shop', 'Shop-wise sales & margin'], ['item', 'Medicine-wise sales & gross profit'], ['sup', 'Supplier-wise purchases']], val: 'shop' }, { k: 'from', label: 'From', type: 'date', val: function () { return svc.currentYear().start; } }, { k: 'to', label: 'To', type: 'date', val: PD.today }],
+    PD.report(el, { id: 'anal', title: 'Sales, purchase and profit analysis', filters: [{ k: 'kind', label: 'Report', type: 'select', w: 250, options: [['shop', 'Shop / party-wise sales & margin'], ['item', 'Medicine-wise sales & gross profit'], ['sup', 'Supplier-wise purchases']], val: 'shop' }, { k: 'from', label: 'From', type: 'date', val: function () { return svc.currentYear().start; } }, { k: 'to', label: 'To', type: 'date', val: PD.today }],
       load: function (f) {
         var g = {}, rows;
         function row(k, name) { return g[k] = g[k] || { name: name, qty: 0, sales: 0, ret: 0, cost: 0, retCost: 0, bills: 0 }; }
@@ -368,9 +374,10 @@ PD.views.books = { render: function (host, arg) {
           return { cols: [{ k: 'name', label: 'Supplier', fmt: bold }, { k: 'lots', label: 'Lots', align: 'r' }, { k: 'qty', label: 'Strips', align: 'r' }, amt('val', 'Purchase value (incl. GST)')], rows: rows };
         }
         D().wdisp.forEach(function (d) { if (!d.bill || d.date < f.from || d.date > f.to) return; d.lines.forEach(function (l) { var k = f.kind === 'shop' ? d.shopId : l.itemId, o = row(k, f.kind === 'shop' ? svc.wShopName(d.shopId) : svc.itemName(l.itemId)); o.qty += l.qty; o.sales += l.qty * l.rate; o.cost += l.qty * (l.cost || 0); }); if (f.kind === 'shop') row(d.shopId, svc.wShopName(d.shopId)).bills++; });
+        (D().wsales || []).forEach(function (s) { if (s.date < f.from || s.date > f.to) return; if (f.kind === 'shop') row('p' + s.partyId, svc.cusName(s.partyId)).bills++; s.lines.forEach(function (l) { var k = f.kind === 'shop' ? 'p' + s.partyId : l.itemId, o = row(k, f.kind === 'shop' ? svc.cusName(s.partyId) : svc.itemName(l.itemId)); o.qty += l.qty; o.sales += l.net; o.cost += l.qty * (l.cost || 0); }); (s.returns || []).forEach(function (x) { if (x.date < f.from || x.date > f.to) return; x.lines.forEach(function (rl) { var l = s.lines[rl.i], k = f.kind === 'shop' ? 'p' + s.partyId : l.itemId, o = row(k, f.kind === 'shop' ? svc.cusName(s.partyId) : svc.itemName(l.itemId)); o.ret += rl.taxable; o.retCost += rl.qty * (l.cost || 0); }); }); });
         D().wret.forEach(function (r) { var dt = r.doneOn || r.date; if (r.status !== 'Accepted' || dt < f.from || dt > f.to) return; r.lines.forEach(function (l) { if (!l.credit) return; var k = f.kind === 'shop' ? r.shopId : l.itemId, o = row(k, f.kind === 'shop' ? svc.wShopName(r.shopId) : svc.itemName(l.itemId)); o.ret += l.qty * l.rate; o.retCost += retCost(l); }); });
         rows = Object.keys(g).map(function (k) { var o = g[k]; o.sales = PD.r2(o.sales); o.ret = PD.r2(o.ret); o.cost = PD.r2(o.cost); o.retCost = PD.r2(o.retCost); o.net = PD.r2(o.sales - o.ret); o.margin = PD.r2(o.sales - o.ret - (o.cost - o.retCost)); o.pct = o.net ? PD.r2(o.margin * 100 / o.net) : 0; return o; }).sort(function (a, b) { return b.net - a.net; });
-        return { cols: [{ k: 'name', label: f.kind === 'shop' ? 'Shop' : 'Medicine', fmt: bold }].concat(f.kind === 'shop' ? [{ k: 'bills', label: 'Bills', align: 'r' }] : []).concat([{ k: 'qty', label: 'Strips sent', align: 'r' }, amt('sales', 'Sales'), amt('ret', 'Returns'), amt('net', 'Net sales'), amt('margin', 'Gross profit'), { k: 'pct', label: 'Margin %', align: 'r', fmt: function (v) { return v ? v + '%' : ''; } }]), rows: rows, note: 'Gross profit = net sales minus the purchase cost of the strips sent (stock that came back is not counted as cost).' };
+        return { cols: [{ k: 'name', label: f.kind === 'shop' ? 'Shop / party' : 'Medicine', fmt: bold }].concat(f.kind === 'shop' ? [{ k: 'bills', label: 'Bills', align: 'r' }] : []).concat([{ k: 'qty', label: 'Strips sent', align: 'r' }, amt('sales', 'Sales'), amt('ret', 'Returns'), amt('net', 'Net sales'), amt('margin', 'Gross profit'), { k: 'pct', label: 'Margin %', align: 'r', fmt: function (v) { return v ? v + '%' : ''; } }]), rows: rows, note: 'Gross profit = net sales minus the purchase cost of the strips sent (stock that came back is not counted as cost).' };
       } });
   }
 
