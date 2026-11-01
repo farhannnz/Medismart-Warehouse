@@ -7,7 +7,7 @@ var NAV = [
   ['Stock', [['wadd', 'Add Stock', 'cart', 'F2'], ['wstock', 'Current Stock', 'box', 'F5'], ['wshelves', 'Shelves', 'box', ''], ['wscan', 'Strip Lookup', 'explore', 'F6']]],
   ['Shops', [['wreq', 'Shop Requests (scan & dispatch)', 'order', 'F3'], ['wret', 'Returns from Shops', 'ret', 'F4'], ['wacc', 'Shop Accounts (udhaar)', 'rupee', 'F9'], ['wshops', 'Shops & Logins', 'users', ''], ['wpnl', 'Profit & Loss (all shops)', 'report', 'F8']]],
   ['Items', [['itemdlg', 'New / Edit Item', 'pill', '']]],
-  ['Insights', [['wrep', 'Reports', 'report', 'F7'], ['accounts', 'Accounts', 'book', 'F10']]],
+  ['Insights', [['wrep', 'Reports', 'report', 'F7'], ['accounts', 'Accounts', 'book', 'F10'], ['books', 'Books & Finance', 'rupee', '']]],
   ['Setup', [['attendance', 'Attendance', 'users', ''], ['settings', 'Settings & Staff', 'gear', '']]]
 ];
 var TITLES = {}; NAV.forEach(function (g) { g[1].forEach(function (i) { TITLES[i[0]] = i[1]; }); });
@@ -71,7 +71,8 @@ var MENUS = [
   ['Accounts', [
     ['Receive / Pay / Expense (Accounts)', 'accounts'], ['Shop Accounts (udhaar)', 'wacc', null, 'F9'], '-',
     ['Day Book', 'accounts', { tab: 'daybook' }], ['Ledger', 'accounts', { tab: 'ledger' }], ['Trial Balance', 'accounts', { tab: 'tb' }], ['Profit && Loss / Balance Sheet', 'accounts', { tab: 'pnl' }], ['Receivables && Payables', 'accounts', { tab: 'dues' }], '-',
-    ['Suppliers', 'masters', { tab: 'suppliers' }], ['Account Heads', 'accounts', { tab: 'heads' }], ['New / Edit Account', 'acctdlg'], ['Year Closing', 'accounts', { tab: 'year' }]]],
+    ['Suppliers', 'masters', { tab: 'suppliers' }], ['Account Heads', 'accounts', { tab: 'heads' }], ['New / Edit Account', 'acctdlg'], ['Year Closing', 'accounts', { tab: 'year' }], '-',
+    ['Books Dashboard', 'books', { tab: 'dash' }], ['Cash / Bank Book', 'books', { tab: 'cashbank' }], ['Group Summary', 'books', { tab: 'groupsum' }], ['Outstanding && Ageing', 'books', { tab: 'ageing' }], ['Vouchers && Debit / Credit Notes', 'books', { tab: 'vouchers' }], ['Cheques (PDC)', 'books', { tab: 'cheques' }], ['Bank Reconciliation', 'books', { tab: 'bankrec' }], ['Receipts && Payments', 'books', { tab: 'cashflow' }], ['Monthly P&&L && Expenses', 'books', { tab: 'monthly' }], ['GST Reports', 'books', { tab: 'gst' }], ['Opening Balances', 'books', { tab: 'opening' }]]],
   ['Tools', [
     ['Staff && Rights', 'settings', { tab: 'users' }], ['Options', 'settings', { tab: 'shop' }], ['Attendance Register', 'attendance'], ['Backup && Data', 'settings', { tab: 'data' }]]],
   ['View', [['Medicine List Panel', 'dock:items'], ['Alerts Panel', 'dock:msg'], '-', ['Close All Windows', 'closeall'], ['Dark Mode', 'toggle:dark']]],
@@ -81,11 +82,11 @@ var MENUS = [
 var TOOLS = [
   ['Add stock (F2)', 'cart', 'wadd', '#2e8b57'], ['Stock (F5)', 'box', 'wstock', '#8a5a2b'], ['Strip lookup (F6)', 'explore', 'wscan', '#7b5ea7'], '|',
   ['Shop requests (F3)', 'order', 'wreq', '#1e88a8'], ['Returns (F4)', 'ret', 'wret', '#c77d00'], ['Shop accounts (F9)', 'rupee', 'wacc', '#b23c17'], ['Profit & Loss (F8)', 'report', 'wpnl', '#2e7d32'], ['Shops & logins', 'users', 'wshops', '#5d4037'], '|',
-  ['New / edit item', 'pill', 'itemdlg', '#2f6fb3'], ['Reports (F7)', 'report', 'wrep', '#1e88a8'], ['Accounts (F10)', 'book', 'accounts', '#6a3fa0'], '|',
+  ['New / edit item', 'pill', 'itemdlg', '#2f6fb3'], ['Reports (F7)', 'report', 'wrep', '#1e88a8'], ['Accounts (F10)', 'book', 'accounts', '#6a3fa0'], ['Books & finance', 'rupee', 'books', '#0d7a5f'], '|',
   ['Settings', 'gear', 'settings', '#666'], ['Log out', 'lock', 'logout', '#7a8a2e']
 ];
-var TITLES = {}; NAV.forEach(function (g) { g[1].forEach(function (i) { TITLES[i[0]] = i[1]; }); }); TITLES.home = 'Warehouse'; TITLES.masters = 'Manufacturers'; TITLES.itemsexport = 'Item List for Shops'; TITLES.attendance = 'Attendance'; TITLES.shelves = 'Shelves'; TITLES.itemsimport = 'Import Item List'; TITLES.dnote = 'Delivery Note'; TITLES.batchedit = 'Batch Edit'; TITLES.expclaim = 'ExpiryClaim'; TITLES.itemdlg = 'Item'; TITLES.acctdlg = 'Account Details'; TITLES.request = 'Stock Request'; TITLES.reqlist = 'Request List'; TITLES.receive = 'Receive Stock'; TITLES.attendance = 'Attendance'; TITLES.custhist = 'Customer History';
-var RIGHT = { accounts: 'accounts', acctdlg: 'accounts', wshops: 'shopsadmin', wpnl: 'reports', wacc: 'reports', wadd: 'addstock', wstock: 'stock', wshelves: 'stock', wscan: 'stock', wreq: 'requests', wret: 'returns', wrep: 'reports', itemdlg: 'items', itemsexport: 'items', masters: 'items', settings: 'users' };
+var TITLES = {}; NAV.forEach(function (g) { g[1].forEach(function (i) { TITLES[i[0]] = i[1]; }); }); TITLES.home = 'Warehouse'; TITLES.books = 'Books & Finance'; TITLES.masters = 'Manufacturers'; TITLES.itemsexport = 'Item List for Shops'; TITLES.attendance = 'Attendance'; TITLES.shelves = 'Shelves'; TITLES.itemsimport = 'Import Item List'; TITLES.dnote = 'Delivery Note'; TITLES.batchedit = 'Batch Edit'; TITLES.expclaim = 'ExpiryClaim'; TITLES.itemdlg = 'Item'; TITLES.acctdlg = 'Account Details'; TITLES.request = 'Stock Request'; TITLES.reqlist = 'Request List'; TITLES.receive = 'Receive Stock'; TITLES.attendance = 'Attendance'; TITLES.custhist = 'Customer History';
+var RIGHT = { books: 'accounts', accounts: 'accounts', acctdlg: 'accounts', wshops: 'shopsadmin', wpnl: 'reports', wacc: 'reports', wadd: 'addstock', wstock: 'stock', wshelves: 'stock', wscan: 'stock', wreq: 'requests', wret: 'returns', wrep: 'reports', itemdlg: 'items', itemsexport: 'items', masters: 'items', settings: 'users' };
 var wins = [], cur = 'home', docks = { items: false, mfrs: false, sups: false, msg: true }, ui = { toolbar: true, status: true };
 PD.go = function (route, arg) { openWin(route, arg); };
 
