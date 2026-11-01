@@ -53,6 +53,27 @@ function ageRows(kind, asOf) {
 function sumLines(from, to, fn) { var t = 0; D().vouchers.forEach(function (v) { if (v.date >= from && v.date <= to) v.lines.forEach(function (l) { t += fn(l, v) || 0; }); }); return PD.r2(t); }
 PD.books = { bookBal: bookBal, openBills: openBills, ageRows: ageRows, days: days };
 
+/* outward supplies: one row per bill (or credit note) and GST rate. Bills without GST show rate 0. */
+function outward(from, to) {
+  var rows = [];
+  function add(type, d, no, shopId, g) {
+    var c = svc.customer(shopId) || {};
+    Object.keys(g).forEach(function (r) { var sg = type === 'Credit note' ? -1 : 1, o = g[r]; rows.push({ type: type, date: d, no: no, shop: svc.wShopName(shopId), gstin: c.gstin || '', cls: c.gstin ? 'B2B' : 'Unregistered', gst: o.gst, rate: +r, taxable: PD.r2(sg * o.taxable), tax: PD.r2(sg * o.tax) }); });
+  }
+  D().wdisp.forEach(function (d) {
+    if (!d.bill || d.date < from || d.date > to) return; var g = {};
+    d.lines.forEach(function (l) { var r = d.gst ? PD.num(l.tax) : 0, o = g[r] = g[r] || { taxable: 0, tax: 0, gst: !!d.gst }; o.taxable += l.qty * l.rate; o.tax += d.gst ? l.qty * l.rate * r / 100 : 0; });
+    add('Invoice', d.date, d.no, d.shopId, g);
+  });
+  D().wret.forEach(function (r) {
+    var dt = r.doneOn || r.date; if (r.status !== 'Accepted' || dt < from || dt > to) return; var g = {};
+    r.lines.forEach(function (l) { if (!l.credit) return; var rt = l.gst ? PD.num(l.tax) : 0, o = g[rt] = g[rt] || { taxable: 0, tax: 0, gst: !!l.gst }; o.taxable += l.qty * l.rate; o.tax += l.gst ? l.qty * l.rate * rt / 100 : 0; });
+    add('Credit note', dt, r.no, r.shopId, g);
+  });
+  rows.forEach(function (x) { x.cgst = PD.r2(x.tax / 2); x.sgst = PD.r2(x.tax / 2); x.total = PD.r2(x.taxable + x.tax); });
+  return rows.sort(function (a, b) { return a.date.localeCompare(b.date); });
+}
+
 function showVoucher(v, done) {
   var tot = 0; v.lines.forEach(function (l) { tot += l.dr; });
   var manual = !v.src || v.src.kind === 'manual';
@@ -189,9 +210,9 @@ PD.views.books = { render: function (host, arg) {
           .concat(BUCKETS.map(function (b, i) { return amt('b' + i, b[2] + ' days'); })).concat([amt('advance', 'Advance / on account'), { k: 'net', label: 'Net outstanding', align: 'r', sum: true, fmt: function (v) { return '<b>' + PD.n2(v) + '</b>'; } }, amt('over', 'Overdue')]), rows: rows, note: 'Overdue = bills older than the credit days. Click a party for its open bills and to set credit limit and days.' };
       },
       drill: function (r, run) {
-        var asof = el.querySelector('[data-f="asof"]').value, f = [{ k: 'creditLimit', label: 'Credit limit (0 = none)', type: 'number' }, { k: 'creditDays', label: 'Credit days', type: 'number' }, { k: 'phone', label: 'Phone / WhatsApp', full: true }], rec = r.kind === 'cus' ? svc.customer(r.id) : svc.supplier(r.id);
+        var asof = el.querySelector('[data-f="asof"]').value, f = [{ k: 'creditLimit', label: 'Credit limit (0 = none)', type: 'number' }, { k: 'creditDays', label: 'Credit days', type: 'number' }, { k: 'phone', label: 'Phone / WhatsApp' }, { k: 'gstin', label: 'GSTIN (for GSTR-1)' }], rec = r.kind === 'cus' ? svc.customer(r.id) : svc.supplier(r.id);
         var bl = '<table class="t"><thead><tr><th>Bill date</th><th class="r">Age (days)</th><th class="r">Pending</th></tr></thead><tbody>' + r.bills.map(function (b) { return '<tr><td>' + PD.fmtDate(b.d) + '</td><td class="r">' + days(b.d, asof) + '</td><td class="r">' + PD.n2(b.left) + '</td></tr>'; }).join('') + '</tbody></table>';
-        var foot = [{ label: 'Close' }, { label: 'Save limit & days', fn: function (api) { var v = PD.readForm(api.body, f); rec.creditLimit = v.creditLimit; rec.creditDays = v.creditDays; rec.phone = v.phone; PD.save(); PD.toast('Saved'); run(); } }];
+        var foot = [{ label: 'Close' }, { label: 'Save limit & days', fn: function (api) { var v = PD.readForm(api.body, f); rec.creditLimit = v.creditLimit; rec.creditDays = v.creditDays; rec.phone = v.phone; rec.gstin = String(v.gstin || '').toUpperCase(); PD.save(); PD.toast('Saved'); run(); } }];
         if (r.kind === 'cus') foot.push({ label: 'WhatsApp reminder', fn: function (api) {
           var ph = String(PD.readForm(api.body, f).phone || '').replace(/\D/g, ''); if (ph.length === 10) ph = '91' + ph; if (ph.length < 11) { PD.toast('Enter the shop phone number first', 'err'); return false; }
           window.open('https://wa.me/' + ph + '?text=' + encodeURIComponent('Namaste ' + r.name + ', ' + D().shop.name + ' ka aapke paas Rs ' + PD.n2(r.net) + ' baaki hai' + (r.over > 0 ? ' (Rs ' + PD.n2(r.over) + ' due ho chuka hai)' : '') + '. Kripya payment kar dein. Dhanyavaad.'), '_blank'); return false;
@@ -287,11 +308,17 @@ PD.views.books = { render: function (host, arg) {
 
   /* ---------- GST reports (from supplier bills entered in Add Stock) ---------- */
   function gst(el) {
-    PD.report(el, { id: 'gstrep', title: 'GST reports (purchase side; shop bills carry no GST)', filters: [{ k: 'kind', label: 'Report', type: 'select', w: 230, options: [['3b', 'GSTR-3B style summary'], ['rate', 'Rate-wise summary'], ['hsn', 'HSN-wise summary'], ['month', 'Month-wise tax'], ['reg', 'Purchase register (GSTR-2 style)']], val: '3b' }, { k: 'from', label: 'From', type: 'date', val: function () { return svc.currentYear().start; } }, { k: 'to', label: 'To', type: 'date', val: PD.today }],
+    PD.report(el, { id: 'gstrep', title: 'GST reports', filters: [{ k: 'kind', label: 'Report', type: 'select', w: 230, options: [['3b', 'GSTR-3B style summary'], ['gstr1', 'GSTR-1 style: outward invoices & credit notes'], ['hsnout', 'HSN-wise outward summary'], ['rate', 'Rate-wise summary (purchases)'], ['hsn', 'HSN-wise summary'], ['month', 'Month-wise tax'], ['reg', 'Purchase register (GSTR-2 style)']], val: '3b' }, { k: 'from', label: 'From', type: 'date', val: function () { return svc.currentYear().start; } }, { k: 'to', label: 'To', type: 'date', val: PD.today }],
       load: function (f) {
         var lots = D().lots.filter(function (l) { return l.date >= f.from && l.date <= f.to; }), half = function (v) { return PD.r2((v || 0) / 2); };
         function grp(keyFn, labelFn) { var g = {}; lots.forEach(function (l) { var k = keyFn(l), o = g[k] = g[k] || { k: k, name: labelFn(l), qty: 0, taxable: 0, tax: 0 }; o.qty += l.n || 0; o.taxable += l.taxable || 0; o.tax += l.taxAmt || 0; }); return Object.keys(g).sort().map(function (k) { var o = g[k]; o.taxable = PD.r2(o.taxable); o.tax = PD.r2(o.tax); o.cgst = half(o.tax); o.sgst = half(o.tax); o.total = PD.r2(o.taxable + o.tax); return o; }); }
         var tcols = [amt('qty', 'Strips'), amt('taxable', 'Taxable value'), amt('cgst', 'CGST'), amt('sgst', 'SGST'), amt('tax', 'Total tax'), amt('total', 'Invoice value')], rows;
+        var OC = [amt('taxable', 'Taxable value'), amt('cgst', 'CGST'), amt('sgst', 'SGST'), amt('total', 'Invoice value')];
+        if (f.kind === 'gstr1') return { cols: [{ k: 'type', label: 'Type', fmt: function (v) { return '<span class="badge ' + (v === 'Invoice' ? 'brand' : 'warn') + '">' + v + '</span>'; } }, { k: 'date', label: 'Date', fmt: PD.fmtDate }, { k: 'no', label: 'No.' }, { k: 'shop', label: 'Shop', fmt: bold }, { k: 'gstin', label: 'GSTIN' }, { k: 'cls', label: 'Class' }, { k: 'rate', label: 'Rate %', align: 'r' }].concat(OC), rows: outward(f.from, f.to), note: 'Credit notes are the accepted returns of billed stock (shown negative). Set each shop\'s GSTIN under Outstanding & ageing → click the shop.' };
+        if (f.kind === 'hsnout') {
+          var hg = {}; D().wdisp.forEach(function (d) { if (!d.bill || d.date < f.from || d.date > f.to) return; d.lines.forEach(function (l) { var it = svc.item(l.itemId) || {}, rt = d.gst ? PD.num(l.tax) : 0, k = (it.hsn || '') + '|' + rt, o = hg[k] = hg[k] || { name: (it.hsn || 'No HSN') + ' @ ' + rt + '%', qty: 0, taxable: 0, tax: 0 }; o.qty += l.qty; o.taxable += l.qty * l.rate; o.tax += d.gst ? l.qty * l.rate * rt / 100 : 0; }); });
+          return { cols: [{ k: 'name', label: 'HSN / rate', fmt: bold }, amt('qty', 'Strips')].concat(OC), rows: Object.keys(hg).sort().map(function (k) { var o = hg[k]; o.taxable = PD.r2(o.taxable); o.cgst = PD.r2(o.tax / 2); o.sgst = PD.r2(o.tax / 2); o.total = PD.r2(o.taxable + o.tax); return o; }) };
+        }
         if (f.kind === 'rate') return { cols: [{ k: 'name', label: 'GST rate', fmt: bold }].concat(tcols), rows: grp(function (l) { return l.tax || 0; }, function (l) { return (l.tax || 0) + '%'; }), note: 'Intra-state supplies assumed: tax split half CGST, half SGST.' };
         if (f.kind === 'hsn') return { cols: [{ k: 'name', label: 'HSN / rate', fmt: bold }].concat(tcols), rows: grp(function (l) { return (l.hsn || '—') + '|' + (l.tax || 0); }, function (l) { return (l.hsn || 'No HSN') + ' @ ' + (l.tax || 0) + '%'; }) };
         if (f.kind === 'month') return { cols: [{ k: 'name', label: 'Month', fmt: bold }].concat(tcols), rows: grp(function (l) { return l.date.slice(0, 7); }, function (l) { return l.date.slice(0, 7); }) };
@@ -300,9 +327,10 @@ PD.views.books = { render: function (host, arg) {
           return { cols: [{ k: 'date', label: 'Date', fmt: PD.fmtDate }, { k: 'sup', label: 'Supplier' }, { k: 'bill', label: 'Bill no.' }, { k: 'item', label: 'Medicine' }, { k: 'hsn', label: 'HSN' }, { k: 'rate', label: 'Rate %', align: 'r' }, amt('taxable', 'Taxable'), amt('cgst', 'CGST'), amt('sgst', 'SGST'), amt('total', 'Value')], rows: rows };
         }
         var t = grp(function () { return 'all'; }, function () { return ''; })[0] || { taxable: 0, tax: 0, cgst: 0, sgst: 0 };
-        var sales = sumLines(f.from, f.to, function (l) { return l.acc === 'sales' ? l.cr - l.dr : l.acc === 'salesret' ? l.cr - l.dr : 0; }), led = sumLines(f.from, f.to, function (l) { return l.acc === 'intax' ? l.dr - l.cr : 0; });
-        rows = [{ sec: '3.1(a)', d: 'Outward taxable supplies (shop bills, GST not charged)', taxable: 0, cgst: 0, sgst: 0, igst: 0 }, { sec: '3.1(c)', d: 'Other outward supplies, nil rated / exempt (net of returns)', taxable: sales, cgst: 0, sgst: 0, igst: 0 }, { sec: '4(A)(5)', d: 'ITC available: all other ITC (inward supplies from suppliers)', taxable: t.taxable, cgst: t.cgst, sgst: t.sgst, igst: 0 }, { sec: '4(B)', d: 'ITC reversed', taxable: 0, cgst: 0, sgst: 0, igst: 0 }, { sec: '4(C)', d: 'Net ITC available', taxable: t.taxable, cgst: t.cgst, sgst: t.sgst, igst: 0 }, { sec: '', d: 'Input GST in the books for the period (check)', taxable: 0, cgst: half(led), sgst: half(led), igst: 0 }];
-        return { cols: [{ k: 'sec', label: 'Table' }, { k: 'd', label: 'Description', fmt: bold }, amt('taxable', 'Taxable value'), amt('igst', 'IGST'), amt('cgst', 'CGST'), amt('sgst', 'SGST')], rows: rows, note: 'Helper for filing: figures come from Add Stock bills (GST %, HSN). If GST is later charged on shop bills, output tax will need to be added here.' };
+        var ow = outward(f.from, f.to), oa = { taxable: 0, tax: 0 }, onil = 0; ow.forEach(function (x) { if (x.gst) { oa.taxable += x.taxable; oa.tax += x.tax; } else onil += x.taxable; });
+        var outLed = sumLines(f.from, f.to, function (l) { return l.acc === 'outtax' ? l.cr - l.dr : 0; }), led = sumLines(f.from, f.to, function (l) { return l.acc === 'intax' ? l.dr - l.cr : 0; });
+        rows = [{ sec: '3.1(a)', d: 'Outward taxable supplies (shop bills with GST, net of credit notes)', taxable: PD.r2(oa.taxable), cgst: PD.r2(oa.tax / 2), sgst: PD.r2(oa.tax / 2), igst: 0 }, { sec: '3.1(c)', d: 'Other outward supplies, nil rated / exempt (shop bills without GST, net of returns)', taxable: PD.r2(onil), cgst: 0, sgst: 0, igst: 0 }, { sec: '4(A)(5)', d: 'ITC available: all other ITC (inward supplies from suppliers)', taxable: t.taxable, cgst: t.cgst, sgst: t.sgst, igst: 0 }, { sec: '4(B)', d: 'ITC reversed', taxable: 0, cgst: 0, sgst: 0, igst: 0 }, { sec: '4(C)', d: 'Net ITC available', taxable: t.taxable, cgst: t.cgst, sgst: t.sgst, igst: 0 }, { sec: '', d: 'Output GST in the books for the period (check)', taxable: 0, cgst: half(outLed), sgst: half(outLed), igst: 0 }, { sec: '', d: 'Input GST in the books for the period (check)', taxable: 0, cgst: half(led), sgst: half(led), igst: 0 }];
+        return { cols: [{ k: 'sec', label: 'Table' }, { k: 'd', label: 'Description', fmt: bold }, amt('taxable', 'Taxable value'), amt('igst', 'IGST'), amt('cgst', 'CGST'), amt('sgst', 'SGST')], rows: rows, note: 'Helper for filing. Outward = shop bills (GST only on bills made after Settings → Charge GST on bills was turned on). Inward = Add Stock bills. All supplies treated as within the state (CGST + SGST).' };
       } });
   }
 

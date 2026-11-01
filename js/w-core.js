@@ -351,7 +351,7 @@ svc.wDispatch = function (reqId, note) {
   PD.log('Dispatched ' + no, shop.name + ' ' + PD.n2(d.total)); PD.save(); return d;
 };
 svc.wDispatchFile = function (d) {
-  return { type: 'dispatch', v: 3, bill: !!d.bill, warehouse: D().settings.whName, no: d.no, date: d.date, requestNo: d.extNo, by: d.by, note: d.note,
+  return { type: 'dispatch', v: 3, bill: !!d.bill, gst: !!d.gst, warehouse: D().settings.whName, no: d.no, date: d.date, requestNo: d.extNo, by: d.by, note: d.note,
     lines: d.lines.map(function (l, i) { var it = svc.item(l.itemId); return { name: it.name, generic: it.generic, cat: it.cat, schedule: it.schedule, mfr: svc.mfrName(it.mfrId), unit: it.unit, punit: it.punit, conv: it.conv, per: it.per || 1, sunit: it.sunit || 'Tab', hsn: it.hsn, tax: l.tax, reqIdx: i, batchNo: l.batchNo, expiry: l.expiry, mrp: l.mrp, rate: l.rate, qty: l.qty, serials: l.serials }; }) };
 };
 svc.wItemsFile = function () {
@@ -365,10 +365,11 @@ svc.wImportReturn = function (f) {
   if (D().wret.some(function (r) { return r.shopId === shop.id && r.extNo === f.no; })) throw new Error('Return ' + f.no + ' from ' + shop.name + ' is already imported');
   var lines = f.lines.map(function (l) {
     var it = D().items.find(function (i) { return i.name.toLowerCase() === String(l.name || '').toLowerCase(); });
-    return { name: l.name, itemId: it ? it.id : '', batchNo: l.batchNo, expiry: l.expiry, mrp: PD.num(l.mrp), rate: PD.num(l.rate), qty: PD.num(l.qty), reason: l.reason || '', note: l.note || '', serials: l.serials || [], credit: !!l.credit, outcome: /expired|damag/i.test(l.reason || '') ? 'bad' : 'stock' };
+    return { name: l.name, itemId: it ? it.id : '', batchNo: l.batchNo, expiry: l.expiry, mrp: PD.num(l.mrp), rate: PD.num(l.rate), qty: PD.num(l.qty), reason: l.reason || '', note: l.note || '', serials: l.serials || [], credit: !!l.credit, gst: !!l.gst, tax: PD.num(l.tax), outcome: /expired|damag/i.test(l.reason || '') ? 'bad' : 'stock' };
   });
   var rec = { id: PD.uid('wt'), no: svc.docNo('RET-', 'WRET'), extNo: f.no, shopId: shop.id, date: f.date || PD.today(), note: f.note || '', lines: lines, status: 'Pending', value: PD.r2(lines.reduce(function (a, l) { return a + l.qty * l.rate; }, 0)),
-    credit: PD.r2(lines.reduce(function (a, l) { return a + (l.credit ? l.qty * l.rate : 0); }, 0)) };   /* billed stock coming back: reduces what the shop owes once accepted */
+    credit: PD.r2(lines.reduce(function (a, l) { return a + (l.credit ? l.qty * l.rate * (1 + (l.gst ? l.tax / 100 : 0)) : 0); }, 0)),
+    creditTax: PD.r2(lines.reduce(function (a, l) { return a + (l.credit && l.gst ? l.qty * l.rate * l.tax / 100 : 0); }, 0)) };   /* billed stock coming back: reduces what the shop owes once accepted */
   D().wret.push(rec); PD.log('Return imported ' + rec.no, shop.name); PD.save(); return rec;
 };
 svc.wAcceptReturn = function (id, outcomes) {
@@ -454,8 +455,8 @@ svc.wSupplierId = function (name) {
 };
 function payAcc(mode) { return /cash/i.test(mode || '') ? 'cash' : 'bank'; }
 function openYear(date) { var y = svc.yearOf(date || PD.today()); if (y.closed) throw new Error('Financial year ' + y.label + ' is closed. Re-open it under Accounts first.'); }
-function postBill(d) { if (d.vch || !d.bill || !(d.total > 0)) return; d.vch = svc.voucher(d.date, 'Sales', 'Bill ' + d.no + ' to ' + svc.wShopName(d.shopId), [{ acc: svc.wShopCus(d.shopId), dr: d.total }, { acc: 'sales', cr: d.total }], { kind: 'wbill', id: d.id, no: d.no }).id; }
-function postReturn(r) { if (r.vch || r.status !== 'Accepted' || !(r.credit > 0)) return; r.vch = svc.voucher(r.doneOn || r.date, 'Sales Return', 'Return ' + r.no + (r.extNo ? ' / ' + r.extNo : '') + ' from ' + svc.wShopName(r.shopId), [{ acc: 'salesret', dr: r.credit }, { acc: svc.wShopCus(r.shopId), cr: r.credit }], { kind: 'wret', id: r.id, no: r.no }).id; }
+function postBill(d) { if (d.vch || !d.bill || !(d.total > 0)) return; d.vch = svc.voucher(d.date, 'Sales', 'Bill ' + d.no + ' to ' + svc.wShopName(d.shopId), [{ acc: svc.wShopCus(d.shopId), dr: d.total }, { acc: 'sales', cr: d.gst ? d.taxable : d.total }, { acc: 'outtax', cr: d.gst ? d.tax : 0 }], { kind: 'wbill', id: d.id, no: d.no }).id; }
+function postReturn(r) { if (r.vch || r.status !== 'Accepted' || !(r.credit > 0)) return; r.vch = svc.voucher(r.doneOn || r.date, 'Sales Return', 'Return ' + r.no + (r.extNo ? ' / ' + r.extNo : '') + ' from ' + svc.wShopName(r.shopId), [{ acc: 'salesret', dr: PD.r2(r.credit - (r.creditTax || 0)) }, { acc: 'outtax', dr: r.creditTax || 0 }, { acc: svc.wShopCus(r.shopId), cr: r.credit }], { kind: 'wret', id: r.id, no: r.no }).id; }
 function postPay(p) { if (p.vch) return; p.vch = svc.voucher(p.date, 'Receipt', 'Received from ' + svc.wShopName(p.shopId) + ' (' + p.mode + ')' + (p.note ? ' ' + p.note : ''), [{ acc: payAcc(p.mode), dr: p.amount }, { acc: svc.wShopCus(p.shopId), cr: p.amount }], { kind: 'wpay', id: p.id, no: p.no }).id; }
 
 var oAdd = svc.wAddStock;
@@ -473,7 +474,9 @@ svc.wAddStock = function (lines, meta) {
   PD.save(); return lots;
 };
 var oDisp = svc.wDispatch;
-svc.wDispatch = function (reqId, note) { openYear(); var d = oDisp(reqId, note); postBill(d); PD.save(); return d; };
+/* GST on bills to shops: only when the option is on (Settings). Each line is charged the medicine's GST on top of the shop price. */
+function applyGst(d) { var tx = 0; d.lines.forEach(function (l) { l.taxAmt = PD.r2(l.qty * l.rate * PD.num(l.tax) / 100); tx += l.taxAmt; }); d.tax = PD.r2(tx); d.total = PD.r2(d.taxable + d.tax); d.gst = true; }
+svc.wDispatch = function (reqId, note) { openYear(); var d = oDisp(reqId, note); if (D().settings.gstOnBills && d.bill) applyGst(d); postBill(d); PD.save(); return d; };
 var oAcc = svc.wAcceptReturn;
 svc.wAcceptReturn = function (id, outcomes) { openYear(); var r = oAcc(id, outcomes); postReturn(r); PD.save(); return r; };
 var oPay = svc.wReceivePay;
