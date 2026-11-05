@@ -65,6 +65,8 @@ function blocked(lot) { return lot.block ? lot.block + (lot.blockWhy ? ' (' + lo
 var oAlerts = PD.alerts;
 PD.alerts = function () {
   var out = oAlerts ? oAlerts() : [], can = PD.can || function () { return true; };
+  var xp = (D().wxret || []).filter(function (x) { return x.status === 'Pending'; }).length;
+  if (xp && can('stock')) out.unshift({ lvl: 'bad', text: xp + ' expiry return(s) to supplier waiting for your approval', go: ['wmore', { tab: 'xret' }], icon: 'alert' });
   try {
     if (can('accounts') && PD.books) {
       var over = PD.books.ageRows('cus', PD.today()).filter(function (r) { return r.flag === 'Over limit'; });
@@ -90,10 +92,10 @@ function supReturnHTML(r) {
 
 PD.views.wmore = { render: function (host, arg) {
   var tab = (arg && arg.tab) || 'ledger';
-  var TABS = [['ledger', 'Item ledger'], ['sched', 'Schedule H / H1 / X register'], ['reorder', 'Re-order planner'], ['block', 'Hold / Ban batches'], ['physical', 'Physical stock'], ['supret', 'Return to supplier']];
+  var TABS = [['ledger', 'Item ledger'], ['sched', 'Schedule H / H1 / X register'], ['reorder', 'Re-order planner'], ['block', 'Hold / Ban batches'], ['physical', 'Physical stock'], ['supret', 'Return to supplier'], ['xret', 'Approve expiry returns']];
   host.innerHTML = '<div class="tabs" id="mt" style="margin-bottom:14px;flex-wrap:wrap">' + TABS.map(function (t) { return '<button data-t="' + t[0] + '" class="' + (t[0] === tab ? 'on' : '') + '">' + t[1] + '</button>'; }).join('') + '</div><div id="mc"></div>';
   var mc = $('#mc', host);
-  function show(t) { tab = t; PD.$$('#mt button', host).forEach(function (b) { b.classList.toggle('on', b.dataset.t === t); }); mc.innerHTML = ''; var pane = document.createElement('div'); mc.appendChild(pane); ({ ledger: ledger, sched: sched, reorder: reorder, block: block, physical: physical, supret: supret })[t](pane); }
+  function show(t) { tab = t; PD.$$('#mt button', host).forEach(function (b) { b.classList.toggle('on', b.dataset.t === t); }); mc.innerHTML = ''; var pane = document.createElement('div'); mc.appendChild(pane); ({ ledger: ledger, sched: sched, reorder: reorder, block: block, physical: physical, xret: xret, supret: supret })[t](pane); }
   PD.on($('#mt', host), 'click', 'button', function (e, b) { show(b.dataset.t); });
 
   /* ----- item ledger ----- */
@@ -202,6 +204,38 @@ PD.views.wmore = { render: function (host, arg) {
       PD.report($('#rh', el), { id: 'wpret', title: 'Returns to suppliers', load: function () { return { cols: [{ k: 'date', label: 'Date', fmt: PD.fmtDate }, { k: 'no', label: 'Debit note', fmt: bold }, { k: 'sup', label: 'Supplier' }, { k: 'reason', label: 'Reason' }, { k: 'qty', label: 'Strips', align: 'r' }, amt('taxable', 'Taxable'), amt('tax', 'GST'), amt('total', 'Total')], rows: (D().wpret || []).slice().reverse().map(function (r) { return { id: r.id, date: r.date, no: r.no, sup: svc.supName(r.supplierId), reason: r.reason, qty: r.lines.reduce(function (a, l) { return a + l.qty; }, 0), taxable: r.taxable, tax: r.tax, total: r.total }; }), note: 'Click a row to print the debit note again.' }; },
         drill: function (r) { var x = (D().wpret || []).find(function (y) { return y.id === r.id; }); if (x) PD.printHTML(supReturnHTML(x), 'Debit note ' + x.no); } });
     }
+    draw();
+  }
+  /* ----- expiry returns prepared automatically when goods arrive with <= 30 days to expiry ----- */
+  function xret(el) {
+    var admin = !!(PD.user && PD.user.role === 'Admin');
+    function lineRows(p) { return p.lines.map(function (l) { return '<tr><td><b>' + esc(svc.itemName(l.itemId)) + '</b></td><td>' + esc(l.batchNo) + '</td><td>' + PD.expBadge(l.expiry) + '</td><td class="r">' + l.qty + '</td><td class="r">' + PD.n2(l.rate) + '</td><td class="r">' + PD.n2(l.qty * l.rate) + '</td></tr>'; }).join(''); }
+    function draw() {
+      var all = (D().wxret || []).slice().reverse(), pend = all.filter(function (p) { return p.status === 'Pending'; }), done = all.filter(function (p) { return p.status !== 'Pending'; }).slice(0, 30);
+      el.innerHTML = '<p class="hint" style="margin-bottom:10px">When goods are received with <b>' + svc.wExpiryDays() + ' days or less</b> to expiry, a return to the supplier (debit note) is prepared automatically. Approve it to send those strips back and credit the supplier, or reject it to keep the stock. ' + (admin ? '' : '<b style="color:#c62828">Only the admin can approve.</b>') + '</p>' +
+        (pend.length ? pend.map(function (p) {
+          var tot = p.lines.reduce(function (a, l) { return a + l.qty * l.rate; }, 0), sup = p.supplierId ? svc.supName(p.supplierId) : '';
+          return '<div class="card" style="margin-bottom:10px"><div class="hd"><h3 style="padding:0;border:0">' + esc(p.no) + ' &bull; ' + PD.fmtDate(p.date) + ' &bull; Bill ' + esc(p.bill || '-') + '</h3><span class="sp"></span><span class="badge warn">Waiting for approval</span></div><div class="bd">' +
+            '<div class="row" style="gap:10px;align-items:center;margin-bottom:8px"><b>Return to:</b>' + (sup ? '<span>' + esc(sup) + '</span>' : '<select class="in sm" data-sup="' + p.id + '" style="width:auto"><option value="">Choose supplier (' + esc(p.supplierName || 'not entered') + ')</option>' + D().suppliers.filter(function (x) { return x.active !== false; }).map(function (x) { return '<option value="' + x.id + '">' + esc(x.name) + '</option>'; }).join('') + '</select>') + '<span class="sp"></span><b>Credit about &#8377;' + PD.n2(tot) + '</b></div>' +
+            '<div class="tw"><table class="t"><thead><tr><th>Medicine</th><th>Batch</th><th>Expiry</th><th class="r">Strips</th><th class="r">Rate</th><th class="r">Amount</th></tr></thead><tbody>' + lineRows(p) + '</tbody></table></div>' +
+            (admin ? '<div class="row" style="margin-top:8px;gap:8px"><button class="btn p" data-ap="' + p.id + '">Approve &amp; create return</button><button class="btn d" data-rj="' + p.id + '">Reject (keep stock)</button></div>' : '') + '</div></div>';
+        }).join('') : '<div class="card"><div class="bd"><div class="empty">Nothing is waiting for approval.</div></div></div>') +
+        (done.length ? '<div class="card" style="margin-top:12px"><div class="hd"><h3 style="padding:0;border:0">Earlier</h3></div><div class="bd"><div class="tw"><table class="t"><thead><tr><th>No.</th><th>Date</th><th>Supplier</th><th>Lines</th><th>Status</th><th>Debit note</th></tr></thead><tbody>' + done.map(function (p) { return '<tr><td>' + esc(p.no) + '</td><td>' + PD.fmtDate(p.date) + '</td><td>' + esc(p.supplierId ? svc.supName(p.supplierId) : p.supplierName) + '</td><td>' + p.lines.length + '</td><td><span class="badge ' + (p.status === 'Approved' ? 'ok' : 'bad') + '">' + esc(p.status) + '</span></td><td>' + esc(p.retNo || '') + '</td></tr>'; }).join('') + '</tbody></table></div></div></div>' : '');
+    }
+    PD.on(el, 'change', '[data-sup]', function (e, t) { var p = (D().wxret || []).find(function (x) { return x.id === t.dataset.sup; }); if (p) p.supplierId = t.value; });
+    PD.on(el, 'click', '[data-ap]', function (e, t) {
+      var p = (D().wxret || []).find(function (x) { return x.id === t.dataset.ap; }); if (!p) return;
+      try {
+        if (!p.supplierId) throw new Error('Choose the supplier to return these to');
+        var r = svc.wSupReturn({ supplierId: p.supplierId, date: PD.today(), reason: 'Received with less than ' + p.days + ' days to expiry (auto return ' + p.no + ')', gst: true, lines: p.lines.map(function (l) { return { lotId: l.lotId, qty: l.qty, rate: l.rate }; }) });
+        p.status = 'Approved'; p.retNo = r.no; p.retId = r.id; p.approvedBy = PD.user.name; p.approvedAt = PD.today(); PD.log('Expiry return approved ' + p.no, r.no); PD.save();
+        PD.toast('Return ' + r.no + ' created: ' + PD.money(r.total) + ' credited from ' + svc.supName(r.supplierId), 'ok'); PD.printHTML(supReturnHTML(r), 'Debit note ' + r.no); if (PD.refreshAlerts) PD.refreshAlerts(); draw();
+      } catch (er) { PD.err(er); }
+    });
+    PD.on(el, 'click', '[data-rj]', function (e, t) {
+      var p = (D().wxret || []).find(function (x) { return x.id === t.dataset.rj; }); if (!p) return;
+      PD.confirm('Reject this return and keep the near-expiry stock in the warehouse?', 'Reject', true).then(function (ok) { if (!ok) return; p.status = 'Rejected'; p.approvedBy = PD.user.name; p.approvedAt = PD.today(); PD.log('Expiry return rejected ' + p.no, ''); PD.save(); if (PD.refreshAlerts) PD.refreshAlerts(); draw(); });
+    });
     draw();
   }
   show(tab);

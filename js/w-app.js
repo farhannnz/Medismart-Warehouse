@@ -62,7 +62,7 @@ var MENUS = [
   ['Stock', [
     ['Purchase (goods received)', 'wadd', null, 'F2'], ['Current Stock', 'wstock', null, 'F5'], ['Shelves', 'wshelves'], ['Strip Lookup (scan)', 'wscan', null, 'F6'], '-',
     ['Lot-wise Stock', 'wrep', { report: 'lots' }], ['Expiry Report', 'wrep', { report: 'expiry' }], ['Low Stock', 'wrep', { report: 'low' }], ['Written-off Stock', 'wrep', { report: 'bad' }], '-',
-    ['Item Ledger', 'wmore', { tab: 'ledger' }], ['Re-order Planner', 'wmore', { tab: 'reorder' }], ['Hold / Ban Batches', 'wmore', { tab: 'block' }], ['Physical Stock Count', 'wmore', { tab: 'physical' }], ['Return to Supplier (debit note)', 'wmore', { tab: 'supret' }], ['Schedule H / H1 / X Register', 'wmore', { tab: 'sched' }]]],
+    ['Item Ledger', 'wmore', { tab: 'ledger' }], ['Re-order Planner', 'wmore', { tab: 'reorder' }], ['Hold / Ban Batches', 'wmore', { tab: 'block' }], ['Physical Stock Count', 'wmore', { tab: 'physical' }], ['Approve Expiry Returns', 'wmore', { tab: 'xret' }], ['Return to Supplier (debit note)', 'wmore', { tab: 'supret' }], ['Schedule H / H1 / X Register', 'wmore', { tab: 'sched' }]]],
   ['Shops', [
     ['Shop Accounts (udhaar)', 'wacc', null, 'F9'], ['Shops && Logins', 'wshops'], '-', ['Sale Bill to Other Parties', 'wsale'], ['Sale Register (other parties)', 'wsale', { tab: 'list' }], '-', ['Profit && Loss (all shops)', 'wpnl', null, 'F8'], '-',
     ['Shop Requests (scan & dispatch)', 'wreq', null, 'F3'], ['Dispatch History', 'wreq', { tab: 'hist' }], ['Returns from Shops', 'wret', null, 'F4'], '-',

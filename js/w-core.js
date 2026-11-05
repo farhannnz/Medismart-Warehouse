@@ -235,6 +235,16 @@ svc.wEnsureItem = function (l) {
   } else { if (!it.hsn && l.hsn) it.hsn = String(l.hsn).trim(); if (!it.tax && PD.num(l.tax)) it.tax = PD.num(l.tax); }
   return it;
 };
+/* goods that arrive with <= N days (default 30) to expiry: prepare a return to the supplier, the owner only approves it */
+svc.wExpiryDays = function () { return PD.num(D().settings.expRetDays) || 30; };
+svc.wQueueExpiryReturn = function (lots, meta) {
+  var lim = svc.wExpiryDays(), bad = lots.filter(function (l) { return l.expiry && PD.daysToExp(l.expiry) <= lim; });
+  if (!bad.length) return null;
+  var nm = String(meta.supplier || '').trim().toLowerCase(), sup = D().suppliers.find(function (x) { return String(x.name).trim().toLowerCase() === nm; });
+  var rec = { id: PD.uid('xr'), no: svc.docNo('XR-', 'WXRET'), date: PD.today(), supplierId: sup ? sup.id : '', supplierName: meta.supplier || '', bill: meta.bill || '', status: 'Pending', days: lim, by: PD.user ? PD.user.name : '',
+    lines: bad.map(function (l) { return { lotId: l.id, itemId: l.itemId, batchNo: l.batchNo, expiry: l.expiry, qty: l.n, rate: l.cost, left: PD.daysToExp(l.expiry) }; }) };
+  (D().wxret = D().wxret || []).push(rec); PD.log('Expiry return prepared ' + rec.no, rec.lines.length + ' line(s), waiting for approval'); return rec;
+};
 svc.wAddStock = function (lines, meta) {
   meta = meta || {}; var made = [];
   lines.forEach(function (l) {
@@ -256,7 +266,7 @@ svc.wAddStock = function (lines, meta) {
     D().lots.push(lot); made.push(lot);
   });
   if (!made.length) throw new Error('Add at least one medicine with number of strips');
-  PD.log('Stock added', made.length + ' lots, ' + made.reduce(function (a, l) { return a + l.n; }, 0) + ' strips'); PD.save(); return made;
+  PD.log('Stock added', made.length + ' lots, ' + made.reduce(function (a, l) { return a + l.n; }, 0) + ' strips'); made.xret = svc.wQueueExpiryReturn(made, meta); PD.save(); return made;
 };
 function barSvg(text) {
   var n = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
