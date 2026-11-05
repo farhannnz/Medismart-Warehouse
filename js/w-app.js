@@ -4,7 +4,7 @@
 var PD = window.PD, esc = PD.esc, svc = PD.svc, $ = PD.$, $$ = PD.$$;
 
 var NAV = [
-  ['Stock', [['wadd', 'Add Stock', 'cart', 'F2'], ['wstock', 'Current Stock', 'box', 'F5'], ['wshelves', 'Shelves', 'box', ''], ['wmore', 'Stock Control & Compliance', 'box', ''], ['wscan', 'Strip Lookup', 'explore', 'F6']]],
+  ['Stock', [['wadd', 'Purchase', 'cart', 'F2'], ['wstock', 'Current Stock', 'box', 'F5'], ['wshelves', 'Shelves', 'box', ''], ['wmore', 'Stock Control & Compliance', 'box', ''], ['wscan', 'Strip Lookup', 'explore', 'F6']]],
   ['Shops', [['wreq', 'Shop Requests (scan & dispatch)', 'order', 'F3'], ['wret', 'Returns from Shops', 'ret', 'F4'], ['wacc', 'Shop Accounts (udhaar)', 'rupee', 'F9'], ['wshops', 'Shops & Logins', 'users', ''], ['wsale', 'Sale Bill (other parties)', 'cart', ''], ['wpnl', 'Profit & Loss (all shops)', 'report', 'F8']]],
   ['Items', [['itemdlg', 'New / Edit Item', 'pill', '']]],
   ['Insights', [['wrep', 'Reports', 'report', 'F7'], ['accounts', 'Accounts', 'book', 'F10'], ['books', 'Books & Finance', 'rupee', '']]],
@@ -60,7 +60,7 @@ var MENUS = [
   ['Items', [
     ['New / Edit Item', 'itemdlg'], ['Manufacturers', 'masters', { tab: 'mfrs' }]]],
   ['Stock', [
-    ['Add Stock (goods received)', 'wadd', null, 'F2'], ['Current Stock', 'wstock', null, 'F5'], ['Shelves', 'wshelves'], ['Strip Lookup (scan)', 'wscan', null, 'F6'], '-',
+    ['Purchase (goods received)', 'wadd', null, 'F2'], ['Current Stock', 'wstock', null, 'F5'], ['Shelves', 'wshelves'], ['Strip Lookup (scan)', 'wscan', null, 'F6'], '-',
     ['Lot-wise Stock', 'wrep', { report: 'lots' }], ['Expiry Report', 'wrep', { report: 'expiry' }], ['Low Stock', 'wrep', { report: 'low' }], ['Written-off Stock', 'wrep', { report: 'bad' }], '-',
     ['Item Ledger', 'wmore', { tab: 'ledger' }], ['Re-order Planner', 'wmore', { tab: 'reorder' }], ['Hold / Ban Batches', 'wmore', { tab: 'block' }], ['Physical Stock Count', 'wmore', { tab: 'physical' }], ['Return to Supplier (debit note)', 'wmore', { tab: 'supret' }], ['Schedule H / H1 / X Register', 'wmore', { tab: 'sched' }]]],
   ['Shops', [
@@ -81,7 +81,7 @@ var MENUS = [
 ];
 /* toolbar: [title, icon, action, colour] */
 var TOOLS = [
-  ['Add stock (F2)', 'cart', 'wadd', '#2e8b57'], ['Stock (F5)', 'box', 'wstock', '#8a5a2b'], ['Strip lookup (F6)', 'explore', 'wscan', '#7b5ea7'], '|',
+  ['Purchase (F2)', 'cart', 'wadd', '#2e8b57'], ['Stock (F5)', 'box', 'wstock', '#8a5a2b'], ['Strip lookup (F6)', 'explore', 'wscan', '#7b5ea7'], '|',
   ['Shop requests (F3)', 'order', 'wreq', '#1e88a8'], ['Returns (F4)', 'ret', 'wret', '#c77d00'], ['Shop accounts (F9)', 'rupee', 'wacc', '#b23c17'], ['Sale bill to other parties', 'cart', 'wsale', '#00796b'], ['Profit & Loss (F8)', 'report', 'wpnl', '#2e7d32'], ['Shops & logins', 'users', 'wshops', '#5d4037'], '|',
   ['New / edit item', 'pill', 'itemdlg', '#2f6fb3'], ['Reports (F7)', 'report', 'wrep', '#1e88a8'], ['Accounts (F10)', 'book', 'accounts', '#6a3fa0'], ['Books & finance', 'rupee', 'books', '#0d7a5f'], '|',
   ['Settings', 'gear', 'settings', '#666'], ['Log out', 'lock', 'logout', '#7a8a2e']

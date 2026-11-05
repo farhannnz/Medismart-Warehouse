@@ -7,7 +7,7 @@
 var PD = window.PD, svc = PD.svc;
 function D() { return PD.DB; }
 
-PD.RIGHTS = [['items', 'Create & edit items'], ['addstock', 'Add stock (goods received)'], ['stock', 'Stock, shelves & strip lookup'], ['requests', 'Shop requests, scan & dispatch'], ['returns', 'Returns from shops'], ['reports', 'Reports'], ['accounts', 'Accounts (vouchers, ledger, P&L, balance sheet)'], ['users', 'Staff, options & backup'], ['attendance', 'Attendance register (see everyone)']];
+PD.RIGHTS = [['items', 'Create & edit items'], ['addstock', 'Purchase (goods received)'], ['stock', 'Stock, shelves & strip lookup'], ['requests', 'Shop requests, scan & dispatch'], ['returns', 'Returns from shops'], ['reports', 'Reports'], ['accounts', 'Accounts (vouchers, ledger, P&L, balance sheet)'], ['users', 'Staff, options & backup'], ['attendance', 'Attendance register (see everyone)']];
 
 var ob = PD.blank;
 PD.blank = function () {
@@ -147,9 +147,16 @@ svc.wCalcLine = function (l) {
   return { n: q + f, taxable: PD.r2(taxable), taxAmt: PD.r2(tax), amount: PD.r2(taxable + tax), unit: q + f > 0 ? taxable / (q + f) : 0 };
 };
 /* read a supplier bill sheet (CSV / Excel rows as arrays) into Add Stock lines. Unknown medicines are flagged as new. */
+svc.wBillPats = { name: /^(productname|product|itemname|item|medicine|medicinename|description|particulars|name)$/, batch: /^(batch|batchno|batchnumber|lot)$/, exp: /^(exp|expiry|expirydate|expdate|expiryon)$/, hsn: /^(hsn|hsncode|hsnsac)$/, mrp: /^(mrp|mrpstrip|maxretailprice)$/, rate: /^(rate|ptr|pts|purchaserate|purchaseprice|cost|price|unitrate)$/, qty: /^(qty|quantity|strips|nos|noofstrips)$/, free: /^(free|freeqty|fqty|bonus|scheme)$/, disc: /^(disc|discount|disc%|discount%|dis|dis%|cd|cd%)$/, tax: /^(gst|gst%|tax|tax%|gstrate|igst|igst%)$/, mfr: /^(mfr|mfg|company|manufacturer|mfrname)$/ };
+/* guess the heading row and which column is which, for the column-mapping dialog */
+svc.wGuessCols = function (rows) {
+  var norm = function (s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9%]/g, ''); }, pats = svc.wBillPats, best = { hi: 0, map: {}, n: -1 };
+  for (var i = 0; i < Math.min(rows.length, 40); i++) { var m = {}, n = 0; (rows[i] || []).forEach(function (c, ci) { var k = norm(c); Object.keys(pats).forEach(function (f) { if (m[f] == null && pats[f].test(k)) { m[f] = ci; n++; } }); }); if (n > best.n) best = { hi: i, map: m, n: n }; }
+  return best;
+};
 svc.wParseBill = function (rows) {
   var norm = function (s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9%]/g, ''); };
-  var pats = { name: /^(productname|product|itemname|item|medicine|medicinename|description|particulars|name)$/, batch: /^(batch|batchno|batchnumber|lot)$/, exp: /^(exp|expiry|expirydate|expdate|expiryon)$/, hsn: /^(hsn|hsncode|hsnsac)$/, mrp: /^(mrp|mrpstrip|maxretailprice)$/, rate: /^(rate|ptr|pts|purchaserate|purchaseprice|cost|price|unitrate)$/, qty: /^(qty|quantity|strips|nos|noofstrips)$/, free: /^(free|freeqty|fqty|bonus|scheme)$/, disc: /^(disc|discount|disc%|discount%|dis|dis%|cd|cd%)$/, tax: /^(gst|gst%|tax|tax%|gstrate|igst|igst%)$/, mfr: /^(mfr|mfg|company|manufacturer|mfrname)$/ };
+  var pats = svc.wBillPats;
   var hi = -1, map = {}, i, j;
   for (i = 0; i < Math.min(rows.length, 40) && hi < 0; i++) {
     var m = {}; (rows[i] || []).forEach(function (c, ci) { var k = norm(c); Object.keys(pats).forEach(function (f) { if (m[f] == null && pats[f].test(k)) m[f] = ci; }); });
@@ -214,7 +221,7 @@ svc.wReadBillPhoto = function (file, progress) {
         return seq.then(function () { progress('Reading the bill...'); return w.recognize(rotated(img, best.deg, 2200)); }).then(function (r) { return w.terminate().then(function () { return r.data.text; }); });
       });
     });
-  }).then(function (text) { var rows = svc.wBillTextToRows(text); if (rows.length < 2) throw new Error('No bill lines could be read from this picture. Take a straighter, brighter photo, or use the Excel bill.'); return rows; });
+  }).then(function (text) { var rows = svc.wBillTextToRows(text); if (rows.length < 2) { var raw = String(text).split(/\r?\n/).map(function (l) { return l.replace(/[|_~]/g, ' ').trim(); }).filter(function (l) { return l.length > 3; }).map(function (l) { return l.split(/\s{2,}|\t/); }); if (!raw.length) throw new Error('Nothing could be read from this picture. Crop closer to the bill table, or take a straighter, brighter photo.'); raw.rawText = true; return raw; } return rows; });
 };
 /* find a medicine by name, or create it (new ones go on the "NEW" shelf until the shelf is set) */
 svc.wEnsureItem = function (l) {

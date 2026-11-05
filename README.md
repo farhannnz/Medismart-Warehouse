@@ -6,7 +6,7 @@ Data is saved online (Firebase); requests, dispatches and returns reach the shop
 
 ## Flow
 1. **Items → New / Edit Item**: create the medicine, with its **shelf** (required).
-2. **Stock → Add Stock**: search the medicine, enter batch, expiry, number of strips, **purchase price**, **selling price to the shop**, MRP. Save → every strip gets its own code `L<lot>-<n>` and a barcode label (Code 128); print and stick them. The screen shows the shelf to keep them on.
+2. **Stock → Purchase**: search the medicine, enter batch, expiry, number of strips, **purchase price**, **selling price to the shop**, MRP. Save → every strip gets its own code `L<lot>-<n>` and a barcode label (Code 128); print and stick them. The screen shows the shelf to keep them on.
    - **Scan barcode** box: scan the company barcode / QR on the box or strip. The medicine is found by itself (first time: pick it once and the code is remembered; codes are also in Items → Barcode(s)). Each scan adds 1 strip; 2D / GS1 codes also fill batch and expiry. Prices come from the last lot.
 3. **Shops → Shop Requests**: requests from shops appear here automatically. Take the goods to the table, **scan each strip**. Wrong / duplicate / already-sent strips are refused; an earlier-expiry lot triggers a hint. Dispatch → the shop sees it at once in Receive Stock (with every strip's serial).
    - Every dispatch is a **bill** to the shop at the selling price to the shop (no GST). The bill shows the earlier balance and total due.
