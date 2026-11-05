@@ -82,7 +82,7 @@ function lotRows(it) {
 }
 PD.views.wstock = { render: function (host) {
   var d = D(); host.innerHTML = '<div id="sl"></div>';
-  PD.report($('#sl', host), { id: 'w-stock', title: 'Warehouse stock (strips)', filters: [{ k: 'only', label: 'Show', type: 'select', options: [['', 'All medicines'], ['in', 'In stock'], ['out', 'Out of stock'], ['low', 'Low stock']] }],
+  PD.report($('#sl', host), { id: 'w-stock', title: 'Warehouse stock (strips)', filters: [{ k: 'only', label: 'Show', type: 'select', options: [['', 'All medicines'], ['in', 'In stock'], ['out', 'Out of stock'], ['low', 'Low stock']] }, { k: 'left', label: 'Strips left', type: 'select', options: [['', 'Any'], ['1', 'Only 1 left'], ['2', 'Only 2 left'], ['3', 'Only 3 left'], ['4', 'Only 4 left']] }],
     load: function (f) {
       var sm = svc.wStockMap(), cost = {}, sell = {}, near = {};
       d.lots.forEach(function (l) { var n = svc.wLeft(l); if (n > 0) { cost[l.itemId] = (cost[l.itemId] || 0) + n * l.cost; sell[l.itemId] = (sell[l.itemId] || 0) + n * l.sell; if (!near[l.itemId] || l.expiry < near[l.itemId]) near[l.itemId] = l.expiry; } });
@@ -90,7 +90,7 @@ PD.views.wstock = { render: function (host) {
         { k: 'strips', label: 'Strips', align: 'r', sum: true, fmt: function (v, r) { return '<span class="badge ' + (v <= 0 ? 'bad' : v <= r.reorder ? 'warn' : 'ok') + '">' + v + '</span>'; }, raw: function (r) { return r.strips; } }, { k: 'near', label: 'Nearest expiry', fmt: function (v) { return v ? PD.expBadge(v) : ''; }, raw: function (r) { return r.near || ''; } },
         { k: 'cost', label: 'Value at cost', align: 'r', sum: true, fmt: PD.n2 }, { k: 'sell', label: 'Value at shop price', align: 'r', sum: true, fmt: PD.n2 }],
         rows: d.items.filter(function (i) { return i.active !== false; }).map(function (i) { return { id: i.id, name: i.name, generic: i.generic, sched: i.schedule, mfr: svc.mfrName(i.mfrId), shelf: i.rack, strips: sm[i.id] || 0, reorder: i.reorder, near: near[i.id], cost: PD.r2(cost[i.id] || 0), sell: PD.r2(sell[i.id] || 0) }; })
-          .filter(function (r) { return !f.only || (f.only === 'in' ? r.strips > 0 : f.only === 'out' ? r.strips <= 0 : r.strips <= r.reorder); }), note: 'Click a medicine to see its lots, reprint labels or write off expired stock.' };
+          .filter(function (r) { return (!f.left || r.strips === +f.left) && (!f.only || (f.only === 'in' ? r.strips > 0 : f.only === 'out' ? r.strips <= 0 : r.strips <= r.reorder)); }), note: 'Click a medicine to see its lots, reprint labels or write off expired stock.' };
     },
     drill: function (row) {
       var it = svc.item(row.id);
