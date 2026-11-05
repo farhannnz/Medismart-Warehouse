@@ -63,8 +63,52 @@ function blocked(lot) { return lot.block ? lot.block + (lot.blockWhy ? ' (' + lo
 
 /* ---------- alerts: over credit limit, cheques due, held / banned batches ---------- */
 var oAlerts = PD.alerts;
+/* open the mail program with the matter already written; the owner types the address (or it comes from the supplier's Email) */
+PD.openMail = function (to, subject, body) {
+  var a = document.createElement('a'); a.href = 'mailto:' + encodeURIComponent(to || '').replace(/%40/g, '@').replace(/%2C/g, ',') + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body.length > 1800 ? body.slice(0, 1800) + '\n...(list continues, see the app)' : body);
+  document.body.appendChild(a); a.click(); setTimeout(function () { a.remove(); }, 300);
+};
+function whName() { return D().settings.whName || (D().shop && D().shop.name) || 'Warehouse'; }
+svc.wMailReturn = function (p, r) {
+  var sup = svc.supplier(p.supplierId) || {};
+  var body = 'Dear ' + (sup.name || 'Sir / Madam') + ',\n\nWe are returning the following stock which reached us with very little shelf life (' + p.days + ' days or less to expiry)' + (p.bill ? ' on your bill ' + p.bill : '') + ':\n\n' +
+    p.lines.map(function (l, i) { return (i + 1) + '. ' + svc.itemName(l.itemId) + ' | Batch ' + l.batchNo + ' | Exp ' + PD.fmtExp(l.expiry) + ' | ' + l.qty + ' strips | Rate ' + PD.n2(l.rate); }).join('\n') +
+    '\n\nDebit note ' + (r ? r.no : '') + (r ? ' for Rs ' + PD.n2(r.total) : '') + ' has been raised. Please arrange to collect the goods and issue a credit note.\n\nRegards,\n' + whName();
+  PD.openMail(sup.email || '', 'Return of near-expiry stock' + (r ? ' - Debit note ' + r.no : '') + ' - ' + whName(), body);
+};
+svc.wMailOrder = function (p) {
+  var sup = svc.supplier(p.supplierId) || {};
+  var body = 'Dear ' + (sup.name || 'Sir / Madam') + ',\n\nPlease supply the following medicines to ' + whName() + ':\n\n' +
+    p.lines.map(function (l, i) { return (i + 1) + '. ' + svc.itemName(l.itemId) + ' - ' + l.qty + ' strips'; }).join('\n') + '\n\nKindly confirm the rates, availability and delivery date.\n\nRegards,\n' + whName();
+  PD.openMail(sup.email || '', 'Purchase order request ' + p.no + ' - ' + whName(), body);
+};
+/* warehouse low stock (and what the shops have asked for) -> an order to the supplier, prepared for approval */
+svc.wLowLimit = function (it) { var r = PD.num(it.reorder); if (r > 0) return r; var u = String(it.punit || it.unit || '').toLowerCase(); return /bottle|btl|syrup|susp|drop/.test(u) ? 2 : /strip|tab|cap|pc|piece/.test(u) ? 10 : 3; };
+svc.wScanOrders = function () {
+  var d = D(); if (!d || !d.items || !d.lots) return 0;
+  var P = d.wsord = d.wsord || [], today = PD.today(), recent = PD.addDays(today, -7), sm = svc.wStockMap(), demand = {}, covered = {}, stocked = {}, added = 0;
+  (d.wreq || []).forEach(function (r) { if (r.status === 'Pending' || r.status === 'Partly dispatched') { svc.wResolveLines(r); r.lines.forEach(function (l) { if (l.itemId) demand[l.itemId] = (demand[l.itemId] || 0) + PD.num(l.qtyS || l.qty); }); } });
+  P.forEach(function (p) { if (p.status === 'Pending' || (p.decided && p.decided >= recent)) p.lines.forEach(function (l) { covered[l.itemId] = 1; }); });
+  var lastSup = {}; d.lots.forEach(function (l) { stocked[l.itemId] = 1; if (l.supplier) lastSup[l.itemId] = l.supplier; });
+  d.items.forEach(function (it) {
+    if (it.active === false || covered[it.id]) return;
+    var dm = demand[it.id] || 0; if (!stocked[it.id] && !dm) return;
+    var lim = svc.wLowLimit(it), st = sm[it.id] || 0;
+    if (!(st < lim) && !(dm > st)) return;
+    var need = Math.ceil(Math.max(lim * 2, dm + lim) - st); if (need <= 0) return;
+    var nm = String(lastSup[it.id] || '').trim().toLowerCase(), sup = d.suppliers.find(function (x) { return String(x.name).trim().toLowerCase() === nm; }), sid = sup ? sup.id : '';
+    var p = P.find(function (x) { return x.status === 'Pending' && x.supplierId === sid; });
+    if (!p) { p = { id: PD.uid('so'), no: svc.docNo('SO-', 'WSORD'), date: today, status: 'Pending', supplierId: sid, supplierName: lastSup[it.id] || '', lines: [] }; P.push(p); }
+    p.lines.push({ itemId: it.id, stock: st, demand: dm, limit: lim, qty: need, on: true }); added++;
+  });
+  if (added) { PD.log('Supplier order prepared', added + ' line(s) waiting for approval'); PD.save(); }
+  return added;
+};
 PD.alerts = function () {
+  try { svc.wScanOrders(); } catch (e) { console.error('wScanOrders', e); }
   var out = oAlerts ? oAlerts() : [], can = PD.can || function () { return true; };
+  var sp = (D().wsord || []).filter(function (x) { return x.status === 'Pending'; }).length;
+  if (sp && can('stock')) out.unshift({ lvl: 'bad', text: sp + ' supplier order(s) prepared for low stock, waiting for your approval', go: ['wmore', { tab: 'sord' }], icon: 'cart' });
   var xp = (D().wxret || []).filter(function (x) { return x.status === 'Pending'; }).length;
   if (xp && can('stock')) out.unshift({ lvl: 'bad', text: xp + ' expiry return(s) to supplier waiting for your approval', go: ['wmore', { tab: 'xret' }], icon: 'alert' });
   try {
@@ -92,10 +136,10 @@ function supReturnHTML(r) {
 
 PD.views.wmore = { render: function (host, arg) {
   var tab = (arg && arg.tab) || 'ledger';
-  var TABS = [['ledger', 'Item ledger'], ['sched', 'Schedule H / H1 / X register'], ['reorder', 'Re-order planner'], ['block', 'Hold / Ban batches'], ['physical', 'Physical stock'], ['supret', 'Return to supplier'], ['xret', 'Approve expiry returns']];
+  var TABS = [['ledger', 'Item ledger'], ['sched', 'Schedule H / H1 / X register'], ['reorder', 'Re-order planner'], ['block', 'Hold / Ban batches'], ['physical', 'Physical stock'], ['supret', 'Return to supplier'], ['xret', 'Approve expiry returns'], ['sord', 'Order to suppliers (approve)']];
   host.innerHTML = '<div class="tabs" id="mt" style="margin-bottom:14px;flex-wrap:wrap">' + TABS.map(function (t) { return '<button data-t="' + t[0] + '" class="' + (t[0] === tab ? 'on' : '') + '">' + t[1] + '</button>'; }).join('') + '</div><div id="mc"></div>';
   var mc = $('#mc', host);
-  function show(t) { tab = t; PD.$$('#mt button', host).forEach(function (b) { b.classList.toggle('on', b.dataset.t === t); }); mc.innerHTML = ''; var pane = document.createElement('div'); mc.appendChild(pane); ({ ledger: ledger, sched: sched, reorder: reorder, block: block, physical: physical, xret: xret, supret: supret })[t](pane); }
+  function show(t) { tab = t; PD.$$('#mt button', host).forEach(function (b) { b.classList.toggle('on', b.dataset.t === t); }); mc.innerHTML = ''; var pane = document.createElement('div'); mc.appendChild(pane); ({ ledger: ledger, sched: sched, reorder: reorder, block: block, physical: physical, xret: xret, sord: sord, supret: supret })[t](pane); }
   PD.on($('#mt', host), 'click', 'button', function (e, b) { show(b.dataset.t); });
 
   /* ----- item ledger ----- */
@@ -206,6 +250,37 @@ PD.views.wmore = { render: function (host, arg) {
     }
     draw();
   }
+  /* ----- orders to suppliers prepared from low stock (warehouse and shop requests) ----- */
+  function sord(el) {
+    var admin = !!(PD.user && PD.user.role === 'Admin');
+    function find(id) { return (D().wsord || []).find(function (x) { return x.id === id; }); }
+    function draw() {
+      svc.wScanOrders();
+      var all = (D().wsord || []).slice().reverse(), pend = all.filter(function (p) { return p.status === 'Pending'; }), done = all.filter(function (p) { return p.status !== 'Pending'; }).slice(0, 30);
+      el.innerHTML = '<p class="hint" style="margin-bottom:10px">Medicines that are <b>low in the warehouse</b> (10 strips, 2 bottles, 3 for other units, or the item\'s own reorder number), or that the <b>shops have asked for more than you hold</b> (their low-stock requests count), are prepared as an order to the supplier. Untick or change a quantity, choose the supplier, then <b>Approve &amp; open mail</b>: your mail program opens with the order already written, you only type the address and send.' + (admin ? '' : ' <b style="color:#c62828">Only the admin can approve.</b>') + '</p>' +
+        (pend.length ? pend.map(function (p) {
+          return '<div class="card" style="margin-bottom:10px"><div class="hd"><h3 style="padding:0;border:0">' + esc(p.no) + ' &bull; ' + PD.fmtDate(p.date) + '</h3><span class="sp"></span><span class="badge warn">Waiting for approval</span></div><div class="bd"><div class="row" style="gap:10px;align-items:center;margin-bottom:8px"><b>Supplier:</b><select class="in sm" data-sup="' + p.id + '" style="width:auto"><option value="">Choose supplier' + (p.supplierName ? ' (last: ' + esc(p.supplierName) + ')' : '') + '</option>' + D().suppliers.filter(function (x) { return x.active !== false; }).map(function (x) { return '<option value="' + x.id + '"' + (x.id === p.supplierId ? ' selected' : '') + '>' + esc(x.name) + '</option>'; }).join('') + '</select></div>' +
+            '<div class="tw"><table class="t"><thead><tr><th></th><th>Medicine</th><th class="r">In warehouse</th><th class="r">Shops want</th><th class="r">Limit</th><th class="r">Order (strips)</th></tr></thead><tbody>' + p.lines.map(function (l, i) { return '<tr><td><input type="checkbox" data-on="' + p.id + ',' + i + '"' + (l.on !== false ? ' checked' : '') + '></td><td><b>' + esc(svc.itemName(l.itemId)) + '</b></td><td class="r">' + l.stock + '</td><td class="r">' + (l.demand || '') + '</td><td class="r">' + l.limit + '</td><td class="r"><input class="in sm" type="number" min="0" data-q="' + p.id + ',' + i + '" value="' + l.qty + '" style="width:80px"></td></tr>'; }).join('') + '</tbody></table></div>' +
+            (admin ? '<div class="row" style="margin-top:8px;gap:8px"><button class="btn p" data-ap="' + p.id + '">Approve &amp; open mail</button><button class="btn d" data-rj="' + p.id + '">Reject</button></div>' : '') + '</div></div>';
+        }).join('') : '<div class="card"><div class="bd"><div class="empty">No order is waiting. The warehouse checks stock and shop requests by itself.</div></div></div>') +
+        (done.length ? '<div class="card" style="margin-top:12px"><div class="hd"><h3 style="padding:0;border:0">Earlier</h3></div><div class="bd"><div class="tw"><table class="t"><thead><tr><th>No.</th><th>Date</th><th>Supplier</th><th>Lines</th><th>Status</th><th></th></tr></thead><tbody>' + done.map(function (p) { return '<tr><td>' + esc(p.no) + '</td><td>' + PD.fmtDate(p.decided || p.date) + '</td><td>' + esc(p.supplierId ? svc.supName(p.supplierId) : p.supplierName) + '</td><td>' + p.lines.length + '</td><td><span class="badge ' + (p.status === 'Approved' ? 'ok' : 'bad') + '">' + esc(p.status) + '</span></td><td>' + (p.status === 'Approved' ? '<button class="btn sm" data-mo="' + p.id + '">Mail again</button>' : '') + '</td></tr>'; }).join('') + '</tbody></table></div></div></div>' : '');
+    }
+    PD.on(el, 'change', '[data-sup]', function (e, t) { var p = find(t.dataset.sup); if (p) { p.supplierId = t.value; PD.save(); } });
+    PD.on(el, 'change', '[data-on]', function (e, t) { var a = t.dataset.on.split(','), p = find(a[0]); if (p) p.lines[+a[1]].on = t.checked; });
+    PD.on(el, 'change', '[data-q]', function (e, t) { var a = t.dataset.q.split(','), p = find(a[0]); if (p) { p.lines[+a[1]].qty = Math.max(0, Math.floor(PD.num(t.value))); PD.save(); } });
+    PD.on(el, 'click', '[data-ap]', function (e, t) {
+      var p = find(t.dataset.ap); if (!p) return;
+      try {
+        if (!p.supplierId) throw new Error('Choose the supplier for this order');
+        p.lines = p.lines.filter(function (l) { return l.on !== false && PD.num(l.qty) > 0; }); if (!p.lines.length) throw new Error('Tick at least one medicine');
+        p.status = 'Approved'; p.decided = PD.today(); p.by = PD.user.name; PD.log('Supplier order approved ' + p.no, svc.supName(p.supplierId)); PD.save();
+        svc.wMailOrder(p); PD.toast('Order ' + p.no + ' approved. The mail is open: add the address and send.', 'ok'); if (PD.refreshAlerts) PD.refreshAlerts(); draw();
+      } catch (er) { PD.err(er); }
+    });
+    PD.on(el, 'click', '[data-rj]', function (e, t) { var p = find(t.dataset.rj); if (p) { p.status = 'Rejected'; p.decided = PD.today(); p.by = PD.user.name; PD.save(); if (PD.refreshAlerts) PD.refreshAlerts(); draw(); } });
+    PD.on(el, 'click', '[data-mo]', function (e, t) { var p = find(t.dataset.mo); if (p) svc.wMailOrder(p); });
+    draw();
+  }
   /* ----- expiry returns prepared automatically when goods arrive with <= 30 days to expiry ----- */
   function xret(el) {
     var admin = !!(PD.user && PD.user.role === 'Admin');
@@ -220,8 +295,9 @@ PD.views.wmore = { render: function (host, arg) {
             '<div class="tw"><table class="t"><thead><tr><th>Medicine</th><th>Batch</th><th>Expiry</th><th class="r">Strips</th><th class="r">Rate</th><th class="r">Amount</th></tr></thead><tbody>' + lineRows(p) + '</tbody></table></div>' +
             (admin ? '<div class="row" style="margin-top:8px;gap:8px"><button class="btn p" data-ap="' + p.id + '">Approve &amp; create return</button><button class="btn d" data-rj="' + p.id + '">Reject (keep stock)</button></div>' : '') + '</div></div>';
         }).join('') : '<div class="card"><div class="bd"><div class="empty">Nothing is waiting for approval.</div></div></div>') +
-        (done.length ? '<div class="card" style="margin-top:12px"><div class="hd"><h3 style="padding:0;border:0">Earlier</h3></div><div class="bd"><div class="tw"><table class="t"><thead><tr><th>No.</th><th>Date</th><th>Supplier</th><th>Lines</th><th>Status</th><th>Debit note</th></tr></thead><tbody>' + done.map(function (p) { return '<tr><td>' + esc(p.no) + '</td><td>' + PD.fmtDate(p.date) + '</td><td>' + esc(p.supplierId ? svc.supName(p.supplierId) : p.supplierName) + '</td><td>' + p.lines.length + '</td><td><span class="badge ' + (p.status === 'Approved' ? 'ok' : 'bad') + '">' + esc(p.status) + '</span></td><td>' + esc(p.retNo || '') + '</td></tr>'; }).join('') + '</tbody></table></div></div></div>' : '');
+        (done.length ? '<div class="card" style="margin-top:12px"><div class="hd"><h3 style="padding:0;border:0">Earlier</h3></div><div class="bd"><div class="tw"><table class="t"><thead><tr><th>No.</th><th>Date</th><th>Supplier</th><th>Lines</th><th>Status</th><th>Debit note</th><th></th></tr></thead><tbody>' + done.map(function (p) { return '<tr><td>' + esc(p.no) + '</td><td>' + PD.fmtDate(p.date) + '</td><td>' + esc(p.supplierId ? svc.supName(p.supplierId) : p.supplierName) + '</td><td>' + p.lines.length + '</td><td><span class="badge ' + (p.status === 'Approved' ? 'ok' : 'bad') + '">' + esc(p.status) + '</span></td><td>' + esc(p.retNo || '') + '</td><td>' + (p.status === 'Approved' ? '<button class="btn sm" data-mr="' + p.id + '">Mail again</button>' : '') + '</td></tr>'; }).join('') + '</tbody></table></div></div></div>' : '');
     }
+    PD.on(el, 'click', '[data-mr]', function (e, t) { var p = (D().wxret || []).find(function (x) { return x.id === t.dataset.mr; }); if (p) svc.wMailReturn(p, (D().wpret || []).find(function (y) { return y.id === p.retId; })); });
     PD.on(el, 'change', '[data-sup]', function (e, t) { var p = (D().wxret || []).find(function (x) { return x.id === t.dataset.sup; }); if (p) p.supplierId = t.value; });
     PD.on(el, 'click', '[data-ap]', function (e, t) {
       var p = (D().wxret || []).find(function (x) { return x.id === t.dataset.ap; }); if (!p) return;
@@ -229,7 +305,7 @@ PD.views.wmore = { render: function (host, arg) {
         if (!p.supplierId) throw new Error('Choose the supplier to return these to');
         var r = svc.wSupReturn({ supplierId: p.supplierId, date: PD.today(), reason: 'Received with less than ' + p.days + ' days to expiry (auto return ' + p.no + ')', gst: true, lines: p.lines.map(function (l) { return { lotId: l.lotId, qty: l.qty, rate: l.rate }; }) });
         p.status = 'Approved'; p.retNo = r.no; p.retId = r.id; p.approvedBy = PD.user.name; p.approvedAt = PD.today(); PD.log('Expiry return approved ' + p.no, r.no); PD.save();
-        PD.toast('Return ' + r.no + ' created: ' + PD.money(r.total) + ' credited from ' + svc.supName(r.supplierId), 'ok'); PD.printHTML(supReturnHTML(r), 'Debit note ' + r.no); if (PD.refreshAlerts) PD.refreshAlerts(); draw();
+        PD.toast('Return ' + r.no + ' created: ' + PD.money(r.total) + ' credited from ' + svc.supName(r.supplierId), 'ok'); svc.wMailReturn(p, r); if (PD.refreshAlerts) PD.refreshAlerts(); draw();
       } catch (er) { PD.err(er); }
     });
     PD.on(el, 'click', '[data-rj]', function (e, t) {

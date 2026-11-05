@@ -37,7 +37,7 @@ var render = {
     PD.master(host, {
       coll: 'suppliers', title: 'Suppliers', single: 'supplier', size: 'lg', note: 'Linking a supplier to manufacturers/items filters the purchase entry list and helps order creation and claim statements.',
       defaults: function () { return { terms: 'Credit 30 days', links: { mfrs: [], items: [], divisions: '' } }; },
-      fields: [{ k: 'name', label: 'Supplier name', req: true, full: true }, { k: 'phone', label: 'Phone' }, { k: 'gstin', label: 'GSTIN' }, { k: 'dl', label: 'Drug licence no.' }, { k: 'city', label: 'City' }, { k: 'terms', label: 'Payment terms', full: true }],
+      fields: [{ k: 'name', label: 'Supplier name', req: true, full: true }, { k: 'phone', label: 'Phone' }, { k: 'email', label: 'Email (for orders / returns)' }, { k: 'gstin', label: 'GSTIN' }, { k: 'dl', label: 'Drug licence no.' }, { k: 'city', label: 'City' }, { k: 'terms', label: 'Payment terms', full: true }],
       extraHTML: function (v) {
         var L = v.links || { mfrs: [], items: [], divisions: '' };
         return '<h4 style="margin:16px 0 8px">Supplier linking</h4><div class="form"><div class="fld"><label>Manufacturers dealt in</label><select class="in" id="lk-m" multiple size="7">' + PD.DB.mfrs.map(function (m) { return '<option value="' + m.id + '"' + (L.mfrs.indexOf(m.id) >= 0 ? ' selected' : '') + '>' + esc(m.name) + '</option>'; }).join('') + '</select></div>' +
