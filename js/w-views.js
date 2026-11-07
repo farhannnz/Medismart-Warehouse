@@ -25,14 +25,14 @@ PD.views.wadd = { render: function (host) {
   function prices(l, it) { var last = d.lots.filter(function (x) { return x.itemId === it.id; }).pop(); l.mrp = last ? last.mrp : it.mrp; l.cost = last ? last.cost : PD.r2(it.mrp * 0.62); l.sell = last ? last.sell : PD.r2(it.mrp * 0.72); }
   function newLine() { return { itemId: '', hsn: '', batchNo: '', expiry: '', strips: '', free: '', cost: '', disc: 0, tax: d.settings.defaultTax || 0, sell: '', mrp: '' }; }
   /* keep "this strip costs / sells at" in step with the purchase price entered on the bill */
-  function onItem(l, it) { prices(l, it); l.newName = ''; l.hsn = it.hsn || ''; l.tax = it.tax || 0; l.disc = 0; }
+  function onItem(l, it) { prices(l, it); l.newName = ''; l.hsn = it.hsn || ''; l.tax = it.tax || 0; l.disc = 0; l.rack = it.rack || ''; }
   grid = PD.grid($('#gr', host), { id: 'wadd-grid', newLine: newLine,
     cols: [{ k: 'item', label: 'Medicine', type: 'item', always: true }, { k: 'hsn', label: 'HSN', w: 70 }, { k: 'batchNo', label: 'Batch no.', w: 90 }, { k: 'expiry', label: 'Expiry', type: 'month', w: 120 }, { k: 'strips', label: 'Qty (strips)', type: 'number', align: 'r', w: 70 }, { k: 'free', label: 'Free', type: 'number', align: 'r', w: 55 },
       { k: 'cost', label: 'Rate / strip', type: 'number', align: 'r', w: 85 }, { k: 'disc', label: 'Disc %', type: 'number', align: 'r', w: 55 }, { k: 'tax', label: 'GST %', type: 'number', align: 'r', w: 55 }, { k: 'sell', label: 'Selling price to shop / strip', type: 'number', align: 'r', w: 100 }, { k: 'mrp', label: 'MRP / strip', type: 'number', align: 'r', w: 78 },
       { k: 'amt', label: 'Amount (incl. GST)', type: 'calc', align: 'r', calc: function (l) { return PD.n2(svc.wCalcLine(l).amount); } },
-      { k: 'shelf', label: 'Shelf', type: 'calc', calc: function (l) { return l.itemId ? (svc.item(l.itemId).rack || '—') : ''; } }, { k: 'del', type: 'del', always: true }],
+      { k: 'rack', label: 'Shelf', w: 70, ph: 'shelf' }, { k: 'del', type: 'del', always: true }],
     onItem: onItem,
-    hint: function (l) { if (!l.itemId) return l.newName ? '<span class="badge warn">NEW medicine</span> <b>' + esc(l.newName) + '</b> is not in Items yet. It will be created when you save (shelf "NEW" until you set one).' : ''; var it = svc.item(l.itemId); return '<b>' + esc(it.name) + '</b> • shelf <b>' + esc(it.rack || 'NOT SET') + '</b> • in warehouse now <b>' + svc.wStock(it.id) + '</b> strips • reorder level ' + it.reorder; },
+    hint: function (l) { if (!l.itemId) return l.newName ? '<span class="badge warn">NEW medicine</span> <b>' + esc(l.newName) + '</b> is not in Items yet. It will be created when you save (type its shelf in the Shelf column, else it goes on shelf "NEW").' : ''; var it = svc.item(l.itemId); return '<b>' + esc(it.name) + '</b> • shelf <b>' + esc(it.rack || 'NOT SET') + '</b> • in warehouse now <b>' + svc.wStock(it.id) + '</b> strips • reorder level ' + it.reorder; },
     itemFilter: null,
     onChange: function (ls) { var n = 0, s = 0, t = 0, x = 0, p = 0; ls.forEach(function (l) { if (l.itemId || l.newName) { var c = svc.wCalcLine(l); n++; s += c.n; t += c.taxable; x += c.taxAmt; p += c.n * PD.num(l.sell); } }); var a = $('#ic', host); if (!a) return; a.textContent = n; $('#is', host).textContent = s; $('#t1', host).value = PD.n2(t); $('#t2', host).value = PD.n2(x); $('#t3', host).textContent = PD.n2(t + x); $('#t4', host).value = PD.n2(p - t); } });
   grid.addLine(false);

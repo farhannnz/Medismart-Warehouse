@@ -93,10 +93,10 @@ function editImage(srcCanvas) {
 }
 
 /* ---------- rows dialog: pick rows, say what each column is ---------- */
-var ROLES = [['', '— ignore —'], ['name', 'Medicine name'], ['qty', 'Qty'], ['free', 'Free'], ['batch', 'Batch'], ['exp', 'Expiry'], ['hsn', 'HSN'], ['mrp', 'MRP'], ['rate', 'Rate / strip'], ['disc', 'Disc %'], ['tax', 'GST %'], ['mfr', 'Manufacturer']];
-var LABEL = { name: 'Product Name', qty: 'Qty', free: 'Free', batch: 'Batch', exp: 'Exp', hsn: 'HSN', mrp: 'MRP', rate: 'Rate', disc: 'Disc', tax: 'GST', mfr: 'Mfr' };
+var ROLES = [['', '— ignore —'], ['name', 'Medicine name'], ['qty', 'Qty'], ['free', 'Free'], ['batch', 'Batch'], ['exp', 'Expiry'], ['hsn', 'HSN'], ['mrp', 'MRP'], ['rate', 'Rate / strip'], ['disc', 'Disc %'], ['tax', 'GST %'], ['mfr', 'Manufacturer'], ['rack', 'Shelf']];
+var LABEL = { name: 'Product Name', qty: 'Qty', free: 'Free', batch: 'Batch', exp: 'Exp', hsn: 'HSN', mrp: 'MRP', rate: 'Rate', disc: 'Disc', tax: 'GST', mfr: 'Mfr', rack: 'Shelf' };
 function pickRows(sheets, note, done) {
-  var cur = 0, data, width, role, hi, on, MAX = 600;
+  var cur = 0, data, width, role, hi, on, MAX = 600, defShelf = '';
   var m = PD.modal({ title: 'Choose rows and columns', size: 'xl', sticky: true, body: '<div id="rb"></div>', foot: [{ label: 'Cancel' }, { label: 'Fill Purchase', cls: 'p', fn: go }] });
   var rb = PD.$('#rb', m.el);
   function load(i) {
@@ -109,7 +109,7 @@ function pickRows(sheets, note, done) {
   function draw() {
     var h = '<p class="hint" style="margin-bottom:6px">' + esc(note || '') + ' <b>1)</b> Tick the rows you want. <b>2)</b> Under each column heading say what it is (Medicine name and Qty are a must). <b>3)</b> Fix any wrong cell by typing in it. Then press <b>Fill Purchase</b>.</p>';
     h += '<div class="row" style="gap:8px;margin-bottom:6px;flex-wrap:wrap">' + (sheets.length > 1 ? '<select class="in sm" id="sh" style="width:auto">' + sheets.map(function (s, i) { return '<option value="' + i + '"' + (i === cur ? ' selected' : '') + '>Sheet: ' + esc(s.name) + '</option>'; }).join('') + '</select>' : '') +
-      '<button class="btn sm" id="sa">Tick all</button><button class="btn sm" id="sn">Untick all</button><label class="hint">Heading is row <input class="in sm" id="hr" type="number" min="0" value="' + (hi + 1) + '" style="width:60px"> (0 = no heading)</label><span class="sp"></span><span class="hint" id="cnt"></span></div>';
+      '<button class="btn sm" id="sa">Tick all</button><button class="btn sm" id="sn">Untick all</button><label class="hint">Heading is row <input class="in sm" id="hr" type="number" min="0" value="' + (hi + 1) + '" style="width:60px"> (0 = no heading)</label><label class="hint">Shelf for rows with none <input class="in sm" id="dsh" value="' + esc(defShelf) + '" placeholder="e.g. A1" style="width:80px"></label><span class="sp"></span><span class="hint" id="cnt"></span></div>';
     h += '<div class="tw" style="max-height:56vh;overflow:auto"><table class="t"><thead><tr><th></th><th>#</th>';
     for (var c = 0; c < width; c++) h += '<th><select class="in sm" data-role="' + c + '">' + ROLES.map(function (r) { return '<option value="' + r[0] + '"' + (role[c] === r[0] ? ' selected' : '') + '>' + r[1] + '</option>'; }).join('') + '</select></th>';
     h += '</tr></thead><tbody>';
@@ -126,6 +126,7 @@ function pickRows(sheets, note, done) {
   PD.on(m.el, 'change', '[data-on]', function (e, t) { on[+t.dataset.on] = t.checked; count(); });
   PD.on(m.el, 'input', '[data-c]', function (e, t) { var p = t.dataset.c.split(','); data[+p[0]][+p[1]] = t.value; });
   PD.on(m.el, 'change', '#sh', function (e, t) { load(+t.value); });
+  PD.on(m.el, 'input', '#dsh', function (e, t) { defShelf = t.value; });
   PD.on(m.el, 'click', '#sa', function () { data.forEach(function (r, i) { on[i] = i > hi; }); draw(); });
   PD.on(m.el, 'click', '#sn', function () { on = on.map(function () { return false; }); draw(); });
   PD.on(m.el, 'change', '#hr', function (e, t) { hi = Math.max(-1, Math.min(data.length - 1, (+t.value || 0) - 1)); on = on.map(function (v, i) { return i > hi ? v : false; }); draw(); });
@@ -135,31 +136,120 @@ function pickRows(sheets, note, done) {
     var rows = [role.map(function (r) { return r ? LABEL[r] : ''; })];
     data.forEach(function (r, i) { if (on[i]) { var o = []; for (var c = 0; c < width; c++) o.push(r[c] == null ? '' : r[c]); rows.push(o); } });
     if (rows.length < 2) { PD.err(new Error('Tick at least one row.')); return false; }
-    try { done(svc.wParseBill(rows)); } catch (e) { PD.err(e); return false; }
+    try { var res = svc.wParseBill(rows); if (defShelf.trim()) res.lines.forEach(function (l) { if (!l.rack) l.rack = defShelf.trim(); }); done(res); } catch (e) { PD.err(e); return false; }
   }
   load(0);
 }
 
+/* ---------- free AI reader (Google Gemini, free key from aistudio.google.com) ---------- */
+var KEYN = 'wh_gemini_key', MODEL = 'gemini-2.5-flash';
+var HEAD = ['Product Name', 'Qty', 'Free', 'Batch', 'Exp', 'HSN', 'MRP', 'Rate', 'Disc', 'GST', 'Mfr', 'Shelf'];
+var PROMPT = 'This is a medicine purchase bill / invoice from a supplier in India (it may be a photo, a PDF, or spreadsheet text, in any layout). Extract EVERY medicine line item. Return ONLY a JSON array. Each element: {"name":string,"qty":number,"free":number,"batch":string,"exp":string,"hsn":string,"mrp":number,"rate":number,"disc":number,"gst":number,"mfr":string,"shelf":string}. ' +
+  'qty = number of strips/packs billed (not the free ones). free = free / bonus quantity. exp = expiry as MM/YYYY. rate = purchase rate per strip before discount and GST (PTR/PTS). mrp = MRP per strip. disc = discount %. gst = GST % (if CGST and SGST are separate, add them). mfr = manufacturer/company if printed. shelf = rack/shelf only if printed, else "". ' +
+  'Use "" for text and 0 for numbers that are not on the bill. Keep medicine names exactly as printed. Do NOT include totals, headers, tax summary or address rows.';
+/* key typed in the box (this browser only). Empty = use the server (/api/bill-ai, key in Vercel env GEMINI_API_KEY) */
+function getKey() { try { return localStorage.getItem(KEYN) || ''; } catch (e) { return ''; } }
+function setKey(k) { try { if (k) localStorage.setItem(KEYN, k); else localStorage.removeItem(KEYN); } catch (e) {} }
+/* returns the key, '' = use the old reader, null = cancelled */
+function askKey() {
+  return new Promise(function (ok) {
+    var settled = false; function fin(v) { settled = true; ok(v); }
+    var m = PD.modal({ title: 'Free AI bill reader (one-time set-up)', size: 'md', sticky: true,
+      body: '<p>Any photo, PDF, Excel or CSV bill can be read properly by a free AI (Google Gemini). One-time set-up, about 1 minute:</p><ol style="margin:6px 0 10px 18px"><li>Open <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener"><b>aistudio.google.com/apikey</b></a> and sign in with Google.</li><li>Press <b>Create API key</b>, copy it.</li><li>Paste it below. It is kept only in this browser.</li></ol><div class="fld"><label>Gemini API key</label><input class="in" id="gk" placeholder="AIza..." autocomplete="off"></div><p class="hint">The bill picture/text is sent to Google for reading. Free plan has a daily limit. No key? Use the old reader (works only for one fixed bill layout).</p>',
+      onClose: function () { if (!settled) fin(null); },
+      foot: [{ label: 'Cancel' }, { label: 'Use old reader', fn: function () { fin(''); m.close(); return false; } },
+        { label: 'Save & continue', cls: 'p', fn: function () { var v = PD.$('#gk', m.el).value.trim(); if (v.length < 20) { PD.toast('Paste the full key', 'err'); return false; } setKey(v); fin(v); m.close(); return false; } }] });
+  });
+}
+function b64(blob) { return new Promise(function (ok, no) { var r = new FileReader(); r.onload = function () { ok(String(r.result).split(',')[1]); }; r.onerror = function () { no(new Error('Could not read the file')); }; r.readAsDataURL(blob); }); }
+function aiCall(key, parts) {
+  return fetch(key ? 'https://generativelanguage.googleapis.com/v1beta/models/' + MODEL + ':generateContent?key=' + encodeURIComponent(key) : '/api/bill-ai', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contents: [{ parts: parts }], generationConfig: { responseMimeType: 'application/json', temperature: 0 } }) })
+    .catch(function () { throw new Error('No internet. The AI reader needs internet.'); })
+    .then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok) {
+          if (!key && (r.status === 404 || r.status === 501 || r.status === 405)) { var ns = new Error('The AI reader is not set up on the server'); ns.noserver = true; throw ns; }
+          var msg = (j && j.error && j.error.message) || ('Error ' + r.status);
+          if (!key && r.status === 403) throw new Error('The server AI key is not valid. Check GEMINI_API_KEY in Vercel.');
+          if (r.status === 400 && /api key/i.test(msg) || r.status === 403) { setKey(''); throw new Error('The AI key is not valid. It was removed, upload again to enter a new key.'); }
+          if (r.status === 429) throw new Error('Free AI limit reached for now. Wait a minute (or try tomorrow).');
+          throw new Error('AI reader: ' + msg);
+        }
+        var c = j.candidates && j.candidates[0], t = c && c.content && c.content.parts ? c.content.parts.map(function (p) { return p.text || ''; }).join('') : '';
+        if (!t) throw new Error('The AI sent nothing back. Try a clearer picture.');
+        return parseAI(t);
+      });
+    });
+}
+function parseAI(txt) {
+  txt = String(txt || '').replace(/^\s*```(?:json)?/i, '').replace(/```\s*$/, '').trim();
+  var a; try { a = JSON.parse(txt); } catch (e) { throw new Error('The AI answer could not be understood. Try again.'); }
+  if (!Array.isArray(a)) { var k = Object.keys(a || {}).filter(function (x) { return Array.isArray(a[x]); })[0]; a = k ? a[k] : []; }
+  var rows = [HEAD.slice()];
+  a.forEach(function (o) { if (o && String(o.name || '').trim()) rows.push([o.name, o.qty, o.free, o.batch, o.exp, o.hsn, o.mrp, o.rate, o.disc, o.gst, o.mfr, o.shelf].map(function (v) { return v == null ? '' : v; })); });
+  if (rows.length < 2) throw new Error('The AI could not find any medicine lines in this file.');
+  return rows;
+}
+function aiFile(key, f, kind) {
+  var prep = kind === 'pdf' ? Promise.resolve({ blob: f, mime: 'application/pdf' })
+    : fileToCanvas(f).then(function (c) { return new Promise(function (ok) { c.toBlob(function (b) { ok({ blob: b, mime: 'image/jpeg' }); }, 'image/jpeg', 0.8); }); })
+      .catch(function () { var mt = f.type || (/\.hei[cf]$/i.test(f.name) ? 'image/heic' : ''); if (!mt) throw new Error('Could not open this picture.'); return { blob: f, mime: mt }; });
+  return prep.then(function (p) {
+    var lim = key ? 18 : 3;   /* MB: Vercel functions accept about 4.5 MB per request */
+    if (p.blob.size > lim * 1024 * 1024) throw new Error('This file is too big for the AI reader (limit ' + lim + ' MB). Send fewer pages or a smaller photo.');
+    return b64(p.blob).then(function (d) { return aiCall(key, [{ text: PROMPT }, { inline_data: { mime_type: p.mime, data: d } }]); });
+  });
+}
+function aiSheet(key, sheets) {
+  var txt = sheets.map(function (s) { return '[Sheet ' + s.name + ']\n' + s.rows.slice(0, 500).map(function (r) { return (r || []).join('\t'); }).join('\n'); }).join('\n\n').slice(0, 60000);
+  return aiCall(key, [{ text: PROMPT }, { text: 'Bill data:\n' + txt }]);
+}
+
 /* ---------- entry point ---------- */
 PD.billUpload = function (cb) {
-  var i = document.createElement('input'); i.type = 'file'; i.accept = '.csv,.tsv,.txt,.xls,.xlsx,.xlsm,.ods,.pdf,image/*';
+  var i = document.createElement('input'); i.type = 'file'; i.accept = '.csv,.tsv,.txt,.xls,.xlsx,.xlsm,.ods,.pdf,image/*,.heic,.heif';
   i.onchange = function () {
     var f = i.files[0]; if (!f) return;
+    function finish(photo) { return function (res) { cb(res, photo ? { name: f.name, photo: true } : { name: f.name }); }; }
+    function oldPhotoReader(kind) {
+      PD.toast(kind === 'pdf' ? 'Opening the PDF...' : 'Opening the photo...');
+      return (kind === 'pdf' ? pdfToCanvas(f) : fileToCanvas(f)).then(editImage).then(function (blob) {
+        PD.toast('Reading the bill... this takes about a minute');
+        return svc.wReadBillPhoto(blob, function (m) { PD.toast(m); });
+      }).then(function (rows) {
+        pickRows([{ name: 'Bill', rows: rows }], rows.rawText ? 'The bill text was read, but not in a fixed layout, so match the columns yourself.' : 'Read from the picture. A photo can misread numbers, so check every cell against the bill.', finish(true));
+      });
+    }
     sniff(f).then(function (kind) {
       if (kind === 'sheet' || kind === 'text') {
         if (!window.XLSX) throw new Error('The Excel reader did not load. Check the internet connection and refresh the page.');
         return (kind === 'text' ? f.text().then(function (t) { return XLSX.read(t, { type: 'string', raw: true }); }) : f.arrayBuffer().then(function (ab) { return XLSX.read(ab, { type: 'array', cellDates: false }); })).then(function (wb) {
           var sheets = wb.SheetNames.map(function (n) { return { name: n, rows: XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' }) }; }).filter(function (s) { return s.rows.length; });
           if (!sheets.length) throw new Error('This file is empty.');
-          pickRows(sheets, 'File: ' + f.name + '.', function (res) { cb(res, { name: f.name }); });
+          var g = svc.wGuessCols(sheets[0].rows), clear = g.map.name != null && g.map.qty != null;
+          if (!clear) {   /* messy / unusual sheet: let the AI arrange it */
+            PD.toast('Sheet layout is unusual, the AI is arranging it...');
+            return aiSheet(getKey(), sheets).then(function (rows) { pickRows([{ name: 'AI', rows: rows }], 'Arranged by the AI reader. Check every cell against the bill.', finish(false)); })
+              .catch(function (e) { if (!e.noserver) PD.toast(e.message, 'err'); pickRows(sheets, 'File: ' + f.name + '.', finish(false)); });
+          }
+          pickRows(sheets, 'File: ' + f.name + '.', finish(false));
         });
       }
-      PD.toast(kind === 'pdf' ? 'Opening the PDF...' : 'Opening the photo...');
-      return (kind === 'pdf' ? pdfToCanvas(f) : fileToCanvas(f)).then(editImage).then(function (blob) {
-        PD.toast('Reading the bill... this takes about a minute');
-        return svc.wReadBillPhoto(blob, function (m) { PD.toast(m); });
-      }).then(function (rows) {
-        pickRows([{ name: 'Bill', rows: rows }], rows.rawText ? 'The bill text was read, but not in a fixed layout, so match the columns yourself.' : 'Read from the picture. A photo can misread numbers, so check every cell against the bill.', function (res) { cb(res, { name: f.name, photo: true }); });
+      function tryAI(k) {
+        PD.toast('The AI is reading the bill... about 20 seconds');
+        return aiFile(k, f, kind).then(function (rows) {
+          pickRows([{ name: 'Bill', rows: rows }], 'Read by the AI reader. It can still misread a number, so check every cell against the bill.', finish(true));
+        }, function (e) {
+          if (e && (e.noserver || e.message === 'cancelled')) throw e;
+          PD.toast(e.message + ' Trying the old reader...', 'err');
+          return oldPhotoReader(kind);
+        });
+      }
+      /* key from Vercel env (server) first; only if the server is not set up, ask for a personal key */
+      return tryAI(getKey()).catch(function (e) {
+        if (!(e && e.noserver)) throw e;
+        return askKey().then(function (k) { if (k === null) throw new Error('cancelled'); return k ? tryAI(k) : oldPhotoReader(kind); });
       });
     }).catch(function (e) { if (e && e.message === 'cancelled') return; PD.err(e); });
   };

@@ -147,7 +147,7 @@ svc.wCalcLine = function (l) {
   return { n: q + f, taxable: PD.r2(taxable), taxAmt: PD.r2(tax), amount: PD.r2(taxable + tax), unit: q + f > 0 ? taxable / (q + f) : 0 };
 };
 /* read a supplier bill sheet (CSV / Excel rows as arrays) into Add Stock lines. Unknown medicines are flagged as new. */
-svc.wBillPats = { name: /^(productname|product|itemname|item|medicine|medicinename|description|particulars|name)$/, batch: /^(batch|batchno|batchnumber|lot)$/, exp: /^(exp|expiry|expirydate|expdate|expiryon)$/, hsn: /^(hsn|hsncode|hsnsac)$/, mrp: /^(mrp|mrpstrip|maxretailprice)$/, rate: /^(rate|ptr|pts|purchaserate|purchaseprice|cost|price|unitrate)$/, qty: /^(qty|quantity|strips|nos|noofstrips)$/, free: /^(free|freeqty|fqty|bonus|scheme)$/, disc: /^(disc|discount|disc%|discount%|dis|dis%|cd|cd%)$/, tax: /^(gst|gst%|tax|tax%|gstrate|igst|igst%)$/, mfr: /^(mfr|mfg|company|manufacturer|mfrname)$/ };
+svc.wBillPats = { name: /^(productname|product|itemname|item|medicine|medicinename|description|particulars|name)$/, batch: /^(batch|batchno|batchnumber|lot)$/, exp: /^(exp|expiry|expirydate|expdate|expiryon)$/, hsn: /^(hsn|hsncode|hsnsac)$/, mrp: /^(mrp|mrpstrip|maxretailprice)$/, rate: /^(rate|ptr|pts|purchaserate|purchaseprice|cost|price|unitrate)$/, qty: /^(qty|quantity|strips|nos|noofstrips)$/, free: /^(free|freeqty|fqty|bonus|scheme)$/, disc: /^(disc|discount|disc%|discount%|dis|dis%|cd|cd%)$/, tax: /^(gst|gst%|tax|tax%|gstrate|igst|igst%)$/, mfr: /^(mfr|mfg|company|manufacturer|mfrname)$/, rack: /^(shelf|rack|shelfno|rackno|shelfname|location)$/ };
 /* guess the heading row and which column is which, for the column-mapping dialog */
 svc.wGuessCols = function (rows) {
   var norm = function (s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9%]/g, ''); }, pats = svc.wBillPats, best = { hi: 0, map: {}, n: -1 };
@@ -181,7 +181,7 @@ svc.wParseBill = function (rows) {
     var r = rows[i] || [], g = function (f) { return map[f] == null ? '' : r[map[f]]; }, nm = String(g('name') == null ? '' : g('name')).trim().replace(/\s+/g, ' ');
     if (!nm || !(num(g('qty')) > 0)) { if (nm || num(g('qty'))) skipped++; continue; }
     var it = byName[nm.toLowerCase()], mrp = num(g('mrp')), tax = map.tax != null ? num(g('tax')) : (it ? it.tax : D().settings.defaultTax || 0);
-    var l = { itemId: it ? it.id : '', newName: it ? '' : nm, mfr: String(g('mfr') || '').trim(), hsn: String(g('hsn') || (it && it.hsn) || '').trim(), batchNo: String(g('batch') || '').trim(), expiry: expOf(g('exp')), strips: num(g('qty')), free: num(g('free')), cost: num(g('rate')), disc: num(g('disc')), tax: tax, mrp: mrp || (it ? it.mrp : 0), sell: '' };
+    var l = { itemId: it ? it.id : '', newName: it ? '' : nm, mfr: String(g('mfr') || '').trim(), hsn: String(g('hsn') || (it && it.hsn) || '').trim(), batchNo: String(g('batch') || '').trim(), expiry: expOf(g('exp')), rack: String(g('rack') || (it && it.rack) || '').trim(), strips: num(g('qty')), free: num(g('free')), cost: num(g('rate')), disc: num(g('disc')), tax: tax, mrp: mrp || (it ? it.mrp : 0), sell: '' };
     var last = it && D().lots.filter(function (x) { return x.itemId === it.id; }).pop(), c = svc.wCalcLine(l);
     l.sell = last ? last.sell : PD.r2(Math.max(l.mrp * 0.72, c.unit));
     out.push(l);
@@ -230,7 +230,7 @@ svc.wEnsureItem = function (l) {
   if (!it) {
     var mn = String(l.mfr || '').trim(), m = null;
     if (mn) { m = D().mfrs.find(function (x) { return key(x.name) === key(mn); }); if (!m) { m = { id: PD.uid('mf'), name: mn, active: true }; D().mfrs.push(m); } }
-    it = { id: PD.uid('it'), name: nm, generic: '', cat: 'Allopathy', schedule: '', mfrId: m ? m.id : '', division: '', rack: 'NEW', hsn: String(l.hsn || '').trim(), tax: PD.num(l.tax), mrp: PD.num(l.mrp), margin: 20, reorder: 10, unit: 'Strip', punit: 'Box', conv: 1, batch: true, active: true };
+    it = { id: PD.uid('it'), name: nm, generic: '', cat: 'Allopathy', schedule: '', mfrId: m ? m.id : '', division: '', rack: String(l.rack || '').trim() || 'NEW', hsn: String(l.hsn || '').trim(), tax: PD.num(l.tax), mrp: PD.num(l.mrp), margin: 20, reorder: 10, unit: 'Strip', punit: 'Box', conv: 1, batch: true, active: true };
     D().items.push(it);
   } else { if (!it.hsn && l.hsn) it.hsn = String(l.hsn).trim(); if (!it.tax && PD.num(l.tax)) it.tax = PD.num(l.tax); }
   return it;
@@ -251,6 +251,7 @@ svc.wAddStock = function (lines, meta) {
     if (!l.itemId && l.newName && PD.num(l.strips) > 0) l.itemId = svc.wEnsureItem(l).id;
     if (!l.itemId || !(PD.num(l.strips) > 0)) return;
     var it = svc.item(l.itemId); if (!it) throw new Error('Choose the medicine on every line');
+    if (l.rack && String(l.rack).trim() && String(l.rack).trim() !== 'NEW') it.rack = String(l.rack).trim();   /* shelf typed on the line (or in the uploaded file) */
     if (PD.num(l.free) !== Math.floor(PD.num(l.free))) throw new Error('Free strips must be a whole number (' + it.name + ')');
     if (!it.rack) throw new Error(it.name + ' has no shelf. Open the item (Items - New / Edit Item) and give it a shelf first.');
     if (!l.batchNo || !String(l.batchNo).trim()) throw new Error('Batch number is required for ' + it.name);
