@@ -132,11 +132,11 @@ function pickRows(sheets, note, done) {
   PD.on(m.el, 'change', '#hr', function (e, t) { hi = Math.max(-1, Math.min(data.length - 1, (+t.value || 0) - 1)); on = on.map(function (v, i) { return i > hi ? v : false; }); draw(); });
   function go() {
     var nameC = role.indexOf('name'), qtyC = role.indexOf('qty');
-    if (nameC < 0 || qtyC < 0) { PD.err(new Error('Say which column is the Medicine name and which is Qty (the drop-downs above the columns).')); return false; }
+    if (nameC < 0 || qtyC < 0) { bigErr(new Error('Say which column is the Medicine name and which is Qty (the drop-downs above the columns).')); return false; }
     var rows = [role.map(function (r) { return r ? LABEL[r] : ''; })];
     data.forEach(function (r, i) { if (on[i]) { var o = []; for (var c = 0; c < width; c++) o.push(r[c] == null ? '' : r[c]); rows.push(o); } });
-    if (rows.length < 2) { PD.err(new Error('Tick at least one row.')); return false; }
-    try { var res = svc.wParseBill(rows); if (defShelf.trim()) res.lines.forEach(function (l) { if (!l.rack) l.rack = defShelf.trim(); }); done(res); } catch (e) { PD.err(e); return false; }
+    if (rows.length < 2) { bigErr(new Error('Tick at least one row.')); return false; }
+    try { var res = svc.wParseBill(rows); if (defShelf.trim()) res.lines.forEach(function (l) { if (!l.rack) l.rack = defShelf.trim(); }); done(res); } catch (e) { bigErr(e); return false; }
   }
   load(0);
 }
@@ -169,7 +169,7 @@ function aiCall(key, parts) {
     .then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (j) {
         if (!r.ok) {
-          if (!key && (r.status === 404 || r.status === 501 || r.status === 405)) { var ns = new Error('The AI reader is not set up on the server'); ns.noserver = true; throw ns; }
+          if (!key && (r.status === 404 || r.status === 501 || r.status === 405)) { var ns = new Error('The AI reader is not set up on the server (/api/bill-ai answered ' + r.status + '). Add GEMINI_API_KEY in Vercel and redeploy.'); ns.noserver = true; throw ns; }
           var msg = (j && j.error && j.error.message) || ('Error ' + r.status);
           if (!key && r.status === 403) throw new Error('The server AI key is not valid. Check GEMINI_API_KEY in Vercel.');
           if (r.status === 400 && /api key/i.test(msg) || r.status === 403) { setKey(''); throw new Error('The AI key is not valid. It was removed, upload again to enter a new key.'); }
@@ -206,6 +206,23 @@ function aiSheet(key, sheets) {
   return aiCall(key, [{ text: PROMPT }, { text: 'Bill data:\n' + txt }]);
 }
 
+/* ---------- loader + errors that stay on screen until closed ---------- */
+var spinCss = false;
+function busy(msg) {
+  if (!spinCss) { spinCss = true; var s = document.createElement('style'); s.textContent = '@keyframes whspin{to{transform:rotate(360deg)}}'; document.head.appendChild(s); }
+  var m = PD.modal({ title: 'Please wait', size: 'sm', sticky: true, noFocus: true, body: '<div style="display:flex;align-items:center;gap:14px;padding:6px 0"><div style="width:34px;height:34px;border:4px solid #d8e6e2;border-top-color:#19b394;border-radius:50%;animation:whspin .8s linear infinite;flex:none"></div><div id="bmsg" style="font-size:15px">' + esc(msg) + '</div></div>' });
+  return { set: function (t) { var e = PD.$('#bmsg', m.el); if (e) e.textContent = t; }, close: function () { if (m.el.parentNode) m.close(); } };
+}
+/* shows the problem in a box that stays; resolves true if the user pressed the extra button */
+function showErr(msg, extraLabel) {
+  return new Promise(function (ok) {
+    var done = false; function fin(v) { if (!done) { done = true; ok(v); } }
+    PD.modal({ title: 'Problem', size: 'sm', sticky: true, noFocus: true, body: '<p style="color:#c62828;font-size:15px;white-space:pre-wrap">' + esc(msg) + '</p>', onClose: function () { fin(false); },
+      foot: extraLabel ? [{ label: 'Cancel' }, { label: extraLabel, cls: 'p', fn: function () { fin(true); } }] : [{ label: 'OK', cls: 'p' }] });
+  });
+}
+function bigErr(e) { return showErr(e && e.message ? e.message : String(e)); }
+
 /* ---------- entry point ---------- */
 PD.billUpload = function (cb) {
   var i = document.createElement('input'); i.type = 'file'; i.accept = '.csv,.tsv,.txt,.xls,.xlsx,.xlsm,.ods,.pdf,image/*,.heic,.heif';
@@ -215,8 +232,8 @@ PD.billUpload = function (cb) {
     function oldPhotoReader(kind) {
       PD.toast(kind === 'pdf' ? 'Opening the PDF...' : 'Opening the photo...');
       return (kind === 'pdf' ? pdfToCanvas(f) : fileToCanvas(f)).then(editImage).then(function (blob) {
-        PD.toast('Reading the bill... this takes about a minute');
-        return svc.wReadBillPhoto(blob, function (m) { PD.toast(m); });
+        var ld = busy('Reading the bill... this takes about a minute');
+        return svc.wReadBillPhoto(blob, function (m) { ld.set(m); }).then(function (r) { ld.close(); return r; }, function (e) { ld.close(); throw e; });
       }).then(function (rows) {
         pickRows([{ name: 'Bill', rows: rows }], rows.rawText ? 'The bill text was read, but not in a fixed layout, so match the columns yourself.' : 'Read from the picture. A photo can misread numbers, so check every cell against the bill.', finish(true));
       });
@@ -229,29 +246,30 @@ PD.billUpload = function (cb) {
           if (!sheets.length) throw new Error('This file is empty.');
           var g = svc.wGuessCols(sheets[0].rows), clear = g.map.name != null && g.map.qty != null;
           if (!clear) {   /* messy / unusual sheet: let the AI arrange it */
-            PD.toast('Sheet layout is unusual, the AI is arranging it...');
-            return aiSheet(getKey(), sheets).then(function (rows) { pickRows([{ name: 'AI', rows: rows }], 'Arranged by the AI reader. Check every cell against the bill.', finish(false)); })
-              .catch(function (e) { if (!e.noserver) PD.toast(e.message, 'err'); pickRows(sheets, 'File: ' + f.name + '.', finish(false)); });
+            var ld = busy('Sheet layout is unusual, the AI is arranging it...');
+            return aiSheet(getKey(), sheets).then(function (rows) { ld.close(); pickRows([{ name: 'AI', rows: rows }], 'Arranged by the AI reader. Check every cell against the bill.', finish(false)); })
+              .catch(function (e) { ld.close(); var p = e.noserver ? Promise.resolve() : showErr('AI reader failed:\n' + e.message + '\n\nThe sheet will open as it is, set the columns yourself.'); return p.then(function () { pickRows(sheets, 'File: ' + f.name + '.', finish(false)); }); });
           }
           pickRows(sheets, 'File: ' + f.name + '.', finish(false));
         });
       }
       function tryAI(k) {
-        PD.toast('The AI is reading the bill... about 20 seconds');
+        var ld = busy('The AI is reading the bill... about 20 seconds');
         return aiFile(k, f, kind).then(function (rows) {
+          ld.close();
           pickRows([{ name: 'Bill', rows: rows }], 'Read by the AI reader. It can still misread a number, so check every cell against the bill.', finish(true));
         }, function (e) {
+          ld.close();
           if (e && (e.noserver || e.message === 'cancelled')) throw e;
-          PD.toast(e.message + ' Trying the old reader...', 'err');
-          return oldPhotoReader(kind);
+          return showErr('AI reader failed:\n' + e.message, 'Use old reader').then(function (go) { if (!go) throw new Error('cancelled'); return oldPhotoReader(kind); });
         });
       }
       /* key from Vercel env (server) first; only if the server is not set up, ask for a personal key */
       return tryAI(getKey()).catch(function (e) {
         if (!(e && e.noserver)) throw e;
-        return askKey().then(function (k) { if (k === null) throw new Error('cancelled'); return k ? tryAI(k) : oldPhotoReader(kind); });
+        return showErr(e.message + '\n\nYou can paste a personal key now, or use the old reader.', 'Continue').then(function (go) { if (!go) throw new Error('cancelled'); return askKey(); }).then(function (k) { if (k === null) throw new Error('cancelled'); return k ? tryAI(k) : oldPhotoReader(kind); });
       });
-    }).catch(function (e) { if (e && e.message === 'cancelled') return; PD.err(e); });
+    }).catch(function (e) { if (e && e.message === 'cancelled') return; bigErr(e); });
   };
   i.click();
 };
