@@ -208,26 +208,53 @@ function aiSheet(key, sheets) {
 
 /* ---------- loader + errors that stay on screen until closed ---------- */
 var spinCss = false;
-function busy(msg) {
+function busyModal(msg) {
   if (!spinCss) { spinCss = true; var s = document.createElement('style'); s.textContent = '@keyframes whspin{to{transform:rotate(360deg)}}'; document.head.appendChild(s); }
   var m = PD.modal({ title: 'Please wait', size: 'sm', sticky: true, noFocus: true, body: '<div style="display:flex;align-items:center;gap:14px;padding:6px 0"><div style="width:34px;height:34px;border:4px solid #d8e6e2;border-top-color:#19b394;border-radius:50%;animation:whspin .8s linear infinite;flex:none"></div><div id="bmsg" style="font-size:15px">' + esc(msg) + '</div></div>' });
   return { set: function (t) { var e = PD.$('#bmsg', m.el); if (e) e.textContent = t; }, close: function () { if (m.el.parentNode) m.close(); } };
 }
 /* shows the problem in a box that stays; resolves true if the user pressed the extra button */
-function showErr(msg, extraLabel) {
+function showErrModal(msg, extraLabel) {
   return new Promise(function (ok) {
     var done = false; function fin(v) { if (!done) { done = true; ok(v); } }
     PD.modal({ title: 'Problem', size: 'sm', sticky: true, noFocus: true, body: '<p style="color:#c62828;font-size:15px;white-space:pre-wrap">' + esc(msg) + '</p>', onClose: function () { fin(false); },
       foot: extraLabel ? [{ label: 'Cancel' }, { label: extraLabel, cls: 'p', fn: function () { fin(true); } }] : [{ label: 'OK', cls: 'p' }] });
   });
 }
+/* the upload box (hub) stays open: loader, errors and retry all happen inside it */
+var hub = null;
+function hubSt(html) { var e = hub && PD.$('#hst', hub.el); if (e) e.innerHTML = html; }
+function closeHub() { if (hub) { var h = hub; hub = null; h.close(); } }
+function openRows(a, b, c) { closeHub(); pickRows(a, b, c); }
+function busy(msg) {
+  if (!hub) return busyModal(msg);
+  if (!spinCss) { spinCss = true; var s = document.createElement('style'); s.textContent = '@keyframes whspin{to{transform:rotate(360deg)}}'; document.head.appendChild(s); }
+  hubSt('<div style="display:flex;align-items:center;gap:14px;padding:8px 2px"><div style="width:34px;height:34px;border:4px solid #d8e6e2;border-top-color:#19b394;border-radius:50%;animation:whspin .8s linear infinite;flex:none"></div><div id="bmsg" style="font-size:15px">' + esc(msg) + '</div></div>');
+  return { set: function (t) { var e = hub && PD.$('#bmsg', hub.el); if (e) e.textContent = t; }, close: function () { hubSt(''); } };
+}
+function showErr(msg, extraLabel) {
+  if (!hub) return showErrModal(msg, extraLabel);
+  return new Promise(function (ok) {
+    hubSt('<div style="border:1px solid #e0a0a0;background:#fdecec;border-radius:8px;padding:10px 12px"><div style="color:#c62828;white-space:pre-wrap;font-size:14px">' + esc(msg) + '</div><div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end"><button class="btn" id="e0">' + (extraLabel ? 'Cancel' : 'OK') + '</button>' + (extraLabel ? '<button class="btn p" id="e1">' + esc(extraLabel) + '</button>' : '') + '</div></div>');
+    var b0 = PD.$('#e0', hub.el), b1 = PD.$('#e1', hub.el);
+    b0.onclick = function () { hubSt(''); ok(false); }; if (b1) b1.onclick = function () { hubSt(''); ok(true); };
+  });
+}
 function bigErr(e) { return showErr(e && e.message ? e.message : String(e)); }
 
 /* ---------- entry point ---------- */
 PD.billUpload = function (cb) {
-  var i = document.createElement('input'); i.type = 'file'; i.accept = '.csv,.tsv,.txt,.xls,.xlsx,.xlsm,.ods,.pdf,image/*,.heic,.heif';
-  i.onchange = function () {
-    var f = i.files[0]; if (!f) return;
+  if (hub) return;
+  hub = PD.modal({ title: 'Upload supplier bill', size: 'md', sticky: true, noFocus: true, onClose: function () { hub = null; },
+    body: '<div id="drop" style="border:2px dashed #19b394;border-radius:10px;padding:28px 14px;text-align:center;cursor:pointer"><div style="font-size:16px"><b>Choose the bill</b> or drop it here</div><div class="hint" style="margin-top:4px">Photo, PDF, Excel or CSV, any format</div><input type="file" id="hf" hidden accept=".csv,.tsv,.txt,.xls,.xlsx,.xlsm,.ods,.pdf,image/*,.heic,.heif"></div><div id="hst" style="margin-top:12px"></div>',
+    foot: [{ label: 'Close' }] });
+  var inp = PD.$('#hf', hub.el), drop = PD.$('#drop', hub.el);
+  drop.onclick = function () { inp.click(); };
+  inp.onclick = function (e) { e.stopPropagation(); };
+  drop.ondragover = function (e) { e.preventDefault(); };
+  drop.ondrop = function (e) { e.preventDefault(); if (e.dataTransfer.files[0]) run(e.dataTransfer.files[0]); };
+  inp.onchange = function () { var f = inp.files[0]; inp.value = ''; if (f) run(f); };
+  function run(f) {
     function finish(photo) { return function (res) { cb(res, photo ? { name: f.name, photo: true } : { name: f.name }); }; }
     function oldPhotoReader(kind) {
       PD.toast(kind === 'pdf' ? 'Opening the PDF...' : 'Opening the photo...');
@@ -235,7 +262,7 @@ PD.billUpload = function (cb) {
         var ld = busy('Reading the bill... this takes about a minute');
         return svc.wReadBillPhoto(blob, function (m) { ld.set(m); }).then(function (r) { ld.close(); return r; }, function (e) { ld.close(); throw e; });
       }).then(function (rows) {
-        pickRows([{ name: 'Bill', rows: rows }], rows.rawText ? 'The bill text was read, but not in a fixed layout, so match the columns yourself.' : 'Read from the picture. A photo can misread numbers, so check every cell against the bill.', finish(true));
+        openRows([{ name: 'Bill', rows: rows }], rows.rawText ? 'The bill text was read, but not in a fixed layout, so match the columns yourself.' : 'Read from the picture. A photo can misread numbers, so check every cell against the bill.', finish(true));
       });
     }
     sniff(f).then(function (kind) {
@@ -247,17 +274,17 @@ PD.billUpload = function (cb) {
           var g = svc.wGuessCols(sheets[0].rows), clear = g.map.name != null && g.map.qty != null;
           if (!clear) {   /* messy / unusual sheet: let the AI arrange it */
             var ld = busy('Sheet layout is unusual, the AI is arranging it...');
-            return aiSheet(getKey(), sheets).then(function (rows) { ld.close(); pickRows([{ name: 'AI', rows: rows }], 'Arranged by the AI reader. Check every cell against the bill.', finish(false)); })
-              .catch(function (e) { ld.close(); var p = e.noserver ? Promise.resolve() : showErr('AI reader failed:\n' + e.message + '\n\nThe sheet will open as it is, set the columns yourself.'); return p.then(function () { pickRows(sheets, 'File: ' + f.name + '.', finish(false)); }); });
+            return aiSheet(getKey(), sheets).then(function (rows) { ld.close(); openRows([{ name: 'AI', rows: rows }], 'Arranged by the AI reader. Check every cell against the bill.', finish(false)); })
+              .catch(function (e) { ld.close(); var p = e.noserver ? Promise.resolve() : showErr('AI reader failed:\n' + e.message + '\n\nThe sheet will open as it is, set the columns yourself.'); return p.then(function () { openRows(sheets, 'File: ' + f.name + '.', finish(false)); }); });
           }
-          pickRows(sheets, 'File: ' + f.name + '.', finish(false));
+          openRows(sheets, 'File: ' + f.name + '.', finish(false));
         });
       }
       function tryAI(k) {
         var ld = busy('The AI is reading the bill... about 20 seconds');
         return aiFile(k, f, kind).then(function (rows) {
           ld.close();
-          pickRows([{ name: 'Bill', rows: rows }], 'Read by the AI reader. It can still misread a number, so check every cell against the bill.', finish(true));
+          openRows([{ name: 'Bill', rows: rows }], 'Read by the AI reader. It can still misread a number, so check every cell against the bill.', finish(true));
         }, function (e) {
           ld.close();
           if (e && (e.noserver || e.message === 'cancelled')) throw e;
@@ -271,6 +298,5 @@ PD.billUpload = function (cb) {
       });
     }).catch(function (e) { if (e && e.message === 'cancelled') return; bigErr(e); });
   };
-  i.click();
 };
 })();
