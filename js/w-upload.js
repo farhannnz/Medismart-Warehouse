@@ -299,9 +299,14 @@ PD.billUpload = function (cb) {
           openRows(sheets, 'File: ' + f.name + '.', finish(false));
         });
       }
+      var edited = null;   /* the fixed photo, so a retry does not open the editor again */
       function tryAI(k) {
+        var prep = (kind === 'image' || kind === 'pdf')
+          ? (edited ? Promise.resolve(edited) : (kind === 'pdf' ? pdfToCanvas(f) : fileToCanvas(f).catch(function () { return null; })).then(function (c) { return c ? editImage(c) : f; }).then(function (b) { edited = b; return b; }))
+          : Promise.resolve(f);
+        return prep.then(function (src) {
         var ld = busy('The AI is reading the bill... about 20 seconds');
-        return aiFile(k, f, kind).then(function (rows) {
+        return aiFile(k, src, (kind === 'pdf' && src !== f) ? 'image' : kind).then(function (rows) {
           ld.close();
           var warn = rows.bad && rows.bad.length ? ' WARNING: ' + rows.bad.length + ' line(s) do not add up (qty x rate is not the printed amount), so names/qty/rate may be mixed between lines: ' + rows.bad.join('; ') + '. Compare with the bill before filling.' : '';
           openRows([{ name: 'Bill', rows: rows }], 'Read by the AI reader. It can still misread a number, so check every cell against the bill.' + warn, finish(true));
@@ -309,6 +314,7 @@ PD.billUpload = function (cb) {
           ld.close();
           if (e && (e.noserver || e.message === 'cancelled')) throw e;
           return showErr('AI reader failed:\n' + e.message, 'Use old reader').then(function (go) { if (!go) throw new Error('cancelled'); return oldPhotoReader(kind); });
+        });
         });
       }
       /* key from Vercel env (server) first; only if the server is not set up, ask for a personal key */
