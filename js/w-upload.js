@@ -144,7 +144,8 @@ function pickRows(sheets, note, done) {
 /* ---------- free AI reader (Google Gemini, free key from aistudio.google.com) ---------- */
 var KEYN = 'wh_gemini_key', MODEL = 'gemini-2.5-flash';
 var HEAD = ['Product Name', 'Qty', 'Free', 'Batch', 'Exp', 'HSN', 'MRP', 'Rate', 'Disc', 'GST', 'Mfr', 'Shelf'];
-var PROMPT = 'This is a medicine purchase bill / invoice from a supplier in India (it may be a photo, a PDF, or spreadsheet text, in any layout). Extract EVERY medicine line item. Return ONLY a JSON array. Each element: {"name":string,"qty":number,"free":number,"batch":string,"exp":string,"hsn":string,"mrp":number,"rate":number,"disc":number,"gst":number,"mfr":string,"shelf":string}. ' +
+var PROMPT = 'This is a medicine purchase bill / invoice from a supplier in India (it may be a photo, a PDF, or spreadsheet text, in any layout, possibly rotated). Extract EVERY medicine line item. Return ONLY a JSON array. Each element: {"name":string,"qty":number,"free":number,"batch":string,"exp":string,"hsn":string,"mrp":number,"rate":number,"disc":number,"gst":number,"amount":number,"mfr":string,"shelf":string}. ' +
+  'ROW ALIGNMENT IS CRITICAL: read each printed line completely, left to right, and keep every value of that line together. Never mix the name, batch, qty, rate or amount of one line with another line. Count the printed lines first and return exactly that many elements, in the same order, even if two lines have the same name. amount = the line amount printed on the bill for that line (0 if none). A line is right only if amount is about qty x rate (the discount and GST may change it a little). ' +
   'qty = number of strips/packs billed (not the free ones). free = free / bonus quantity. exp = expiry as MM/YYYY. rate = purchase rate per strip before discount and GST (PTR/PTS). mrp = MRP per strip. disc = discount %. gst = GST % (if CGST and SGST are separate, add them). mfr = manufacturer/company if printed. shelf = rack/shelf only if printed, else "". ' +
   'Use "" for text and 0 for numbers that are not on the bill. Keep medicine names exactly as printed. Do NOT include totals, headers, tax summary or address rows.';
 /* key typed in the box (this browser only). Empty = use the server (/api/bill-ai, key in Vercel env GEMINI_API_KEY) */
@@ -186,10 +187,28 @@ function parseAI(txt) {
   txt = String(txt || '').replace(/^\s*```(?:json)?/i, '').replace(/```\s*$/, '').trim();
   var a; try { a = JSON.parse(txt); } catch (e) { throw new Error('The AI answer could not be understood. Try again.'); }
   if (!Array.isArray(a)) { var k = Object.keys(a || {}).filter(function (x) { return Array.isArray(a[x]); })[0]; a = k ? a[k] : []; }
-  var rows = [HEAD.slice()];
-  a.forEach(function (o) { if (o && String(o.name || '').trim()) rows.push([o.name, o.qty, o.free, o.batch, o.exp, o.hsn, o.mrp, o.rate, o.disc, o.gst, o.mfr, o.shelf].map(function (v) { return v == null ? '' : v; })); });
+  var rows = [HEAD.slice()], bad = [];
+  a.forEach(function (o) {
+    if (!(o && String(o.name || '').trim())) return;
+    rows.push([o.name, o.qty, o.free, o.batch, o.exp, o.hsn, o.mrp, o.rate, o.disc, o.gst, o.mfr, o.shelf].map(function (v) { return v == null ? '' : v; }));
+    /* self-check: the printed line amount must be about qty x rate (with or without discount / GST) */
+    var q = +o.qty || 0, r = +o.rate || 0, am = +o.amount || 0, d = +o.disc || 0, g = +o.gst || 0;
+    if (am > 0 && q > 0 && r > 0) {
+      var cands = [q * r, q * r * (1 - d / 100), q * r * (1 + g / 100), q * r * (1 - d / 100) * (1 + g / 100)];
+      if (!cands.some(function (c) { return Math.abs(c - am) <= Math.max(1.5, am * 0.01); })) bad.push(String(o.name).trim() + ' (qty ' + q + ' x rate ' + r + ' is not ' + am + ')');
+    }
+  });
   if (rows.length < 2) throw new Error('The AI could not find any medicine lines in this file.');
+  rows.bad = bad;
   return rows;
+}
+/* reads the bill; if some lines fail the qty x rate = amount check, asks the AI once more with those lines named */
+function aiCheck(key, parts) {
+  return aiCall(key, parts).then(function (rows) {
+    if (!rows.bad.length) return rows;
+    var fix = { text: 'Your previous answer mixed up values between lines. These lines failed the check amount = qty x rate: ' + rows.bad.join('; ') + '. Read the bill again line by line, keep each line\'s name, batch, qty, rate and amount together, and return the full corrected JSON array.' };
+    return aiCall(key, parts.concat([fix])).then(function (r2) { return r2.bad.length <= rows.bad.length ? r2 : rows; }, function () { return rows; });
+  });
 }
 function aiFile(key, f, kind) {
   var prep = kind === 'pdf' ? Promise.resolve({ blob: f, mime: 'application/pdf' })
@@ -198,12 +217,12 @@ function aiFile(key, f, kind) {
   return prep.then(function (p) {
     var lim = key ? 18 : 3;   /* MB: Vercel functions accept about 4.5 MB per request */
     if (p.blob.size > lim * 1024 * 1024) throw new Error('This file is too big for the AI reader (limit ' + lim + ' MB). Send fewer pages or a smaller photo.');
-    return b64(p.blob).then(function (d) { return aiCall(key, [{ text: PROMPT }, { inline_data: { mime_type: p.mime, data: d } }]); });
+    return b64(p.blob).then(function (d) { return aiCheck(key, [{ text: PROMPT }, { inline_data: { mime_type: p.mime, data: d } }]); });
   });
 }
 function aiSheet(key, sheets) {
   var txt = sheets.map(function (s) { return '[Sheet ' + s.name + ']\n' + s.rows.slice(0, 500).map(function (r) { return (r || []).join('\t'); }).join('\n'); }).join('\n\n').slice(0, 60000);
-  return aiCall(key, [{ text: PROMPT }, { text: 'Bill data:\n' + txt }]);
+  return aiCheck(key, [{ text: PROMPT }, { text: 'Bill data:\n' + txt }]);
 }
 
 /* ---------- loader + errors that stay on screen until closed ---------- */
@@ -284,7 +303,8 @@ PD.billUpload = function (cb) {
         var ld = busy('The AI is reading the bill... about 20 seconds');
         return aiFile(k, f, kind).then(function (rows) {
           ld.close();
-          openRows([{ name: 'Bill', rows: rows }], 'Read by the AI reader. It can still misread a number, so check every cell against the bill.', finish(true));
+          var warn = rows.bad && rows.bad.length ? ' WARNING: ' + rows.bad.length + ' line(s) do not add up (qty x rate is not the printed amount), so names/qty/rate may be mixed between lines: ' + rows.bad.join('; ') + '. Compare with the bill before filling.' : '';
+          openRows([{ name: 'Bill', rows: rows }], 'Read by the AI reader. It can still misread a number, so check every cell against the bill.' + warn, finish(true));
         }, function (e) {
           ld.close();
           if (e && (e.noserver || e.message === 'cancelled')) throw e;
