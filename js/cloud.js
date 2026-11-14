@@ -413,10 +413,10 @@ PD.load = function () {
 /* ---------- shop: a small summary per day for the warehouse P&L (shops/{id}/days/{date}) ---------- */
 C.daySummaries = function (D) {
   var out = {}, accs = {}; (D.accounts || []).forEach(function (a) { accs[a.id] = a; });
-  function day(d) { return out[d] || (out[d] = { date: d, bills: 0, sales: 0, gst: 0, total: 0, cost: 0, returns: 0, retCost: 0, expense: 0, cashSales: 0 }); }
-  (D.sales || []).forEach(function (s) { var x = day(s.date); x.bills++; x.sales += s.taxable || 0; x.gst += s.tax || 0; x.total += s.total || 0; if (s.payMode === 'cash') x.cashSales += s.total || 0; (s.lines || []).forEach(function (l) { x.cost += (l.qty || 0) * (l.cost || 0); }); });
+  function day(d) { return out[d] || (out[d] = { date: d, bills: 0, sales: 0, gst: 0, total: 0, cost: 0, returns: 0, retCost: 0, expense: 0, cashSales: 0, items: {} }); }
+  (D.sales || []).forEach(function (s) { var x = day(s.date); x.bills++; x.sales += s.taxable || 0; x.gst += s.tax || 0; x.total += s.total || 0; if (s.payMode === 'cash') x.cashSales += s.total || 0; (s.lines || []).forEach(function (l) { x.cost += (l.qty || 0) * (l.cost || 0); if (l.itemId && l.qty) { var it = x.items[l.itemId] || (x.items[l.itemId] = { n: String(l.name || '').slice(0, 60), q: 0 }); it.q += l.qty; } }); });
   var byId = {}; (D.sales || []).forEach(function (s) { byId[s.id] = s; });
-  (D.sreturns || []).forEach(function (r) { var x = day(r.date), b = byId[r.billId]; x.returns += r.taxable || 0; (r.lines || []).forEach(function (l) { var c = l.cost != null ? l.cost : (b && b.lines[l.idx] ? b.lines[l.idx].cost || 0 : 0); x.retCost += (l.qty || 0) * c; }); });
+  (D.sreturns || []).forEach(function (r) { var x = day(r.date), b = byId[r.billId]; x.returns += r.taxable || 0; (r.lines || []).forEach(function (l) { var c = l.cost != null ? l.cost : (b && b.lines[l.idx] ? b.lines[l.idx].cost || 0 : 0); x.retCost += (l.qty || 0) * c; var bl = b && b.lines[l.idx]; if (bl && bl.itemId && l.qty) { var ri = x.items[bl.itemId] || (x.items[bl.itemId] = { n: String(bl.name || '').slice(0, 60), q: 0 }); ri.q -= l.qty; } }); });
   (D.vouchers || []).forEach(function (v) { (v.lines || []).forEach(function (l) { var a = accs[l.acc]; if (a && l.acc !== 'roundoff' && (a.group === 'Indirect Expense' || a.group === 'Direct Expense')) day(v.date).expense += (l.dr || 0) - (l.cr || 0); }); });
   Object.keys(out).forEach(function (d) { var x = out[d]; ['sales', 'gst', 'total', 'cost', 'returns', 'retCost', 'expense', 'cashSales'].forEach(function (k) { x[k] = Math.round(x[k] * 100) / 100; }); x.profit = Math.round((x.sales - x.cost - (x.returns - x.retCost) - x.expense) * 100) / 100; });
   return out;
