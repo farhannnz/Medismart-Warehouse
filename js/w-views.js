@@ -23,12 +23,12 @@ PD.views.wadd = { render: function (host) {
     '<div class="msbtns"><button class="mb" id="nw">New</button><button class="mb" id="up">📄 Upload bill (photo / PDF / Excel / CSV)</button><span class="sp"></span><button class="mb" id="sv">💾 Save &amp; Print Labels</button></div></div>';
   /* prices: same as the last lot of this medicine, else a guess from the MRP */
   function prices(l, it) { var last = d.lots.filter(function (x) { return x.itemId === it.id; }).pop(); l.mrp = last ? last.mrp : it.mrp; l.cost = last ? last.cost : PD.r2(it.mrp * 0.62); l.sell = last ? last.sell : PD.r2(it.mrp * 0.72); }
-  function newLine() { return { itemId: '', hsn: '', batchNo: '', expiry: '', strips: '', free: '', cost: '', disc: 0, tax: d.settings.defaultTax || 0, sell: '', mrp: '' }; }
+  function newLine() { return { itemId: '', hsn: '', batchNo: '', expiry: '', strips: '', free: '', cost: '', disc: 0, sch: '', tax: d.settings.defaultTax || 0, sell: '', mrp: '' }; }
   /* keep "this strip costs / sells at" in step with the purchase price entered on the bill */
-  function onItem(l, it) { prices(l, it); l.newName = ''; l.hsn = it.hsn || ''; l.tax = it.tax || 0; l.disc = 0; l.rack = it.rack || ''; }
+  function onItem(l, it) { prices(l, it); l.newName = ''; l.hsn = it.hsn || ''; l.tax = it.tax || 0; l.disc = 0; l.sch = ''; l.rack = it.rack || ''; }
   grid = PD.grid($('#gr', host), { id: 'wadd-grid', newLine: newLine,
     cols: [{ k: 'item', label: 'Medicine', type: 'item', always: true }, { k: 'hsn', label: 'HSN', w: 70 }, { k: 'batchNo', label: 'Batch no.', w: 90 }, { k: 'expiry', label: 'Expiry', type: 'month', w: 120 }, { k: 'strips', label: 'Qty (strips)', type: 'number', align: 'r', w: 70 }, { k: 'free', label: 'Free', type: 'number', align: 'r', w: 55 },
-      { k: 'cost', label: 'Rate / strip', type: 'number', align: 'r', w: 85 }, { k: 'disc', label: 'Disc %', type: 'number', align: 'r', w: 55 }, { k: 'tax', label: 'GST %', type: 'number', align: 'r', w: 55 }, { k: 'sell', label: 'Selling price to shop / strip', type: 'number', align: 'r', w: 100 }, { k: 'mrp', label: 'MRP / strip', type: 'number', align: 'r', w: 78 },
+      { k: 'cost', label: 'Rate / strip', type: 'number', align: 'r', w: 85 }, { k: 'disc', label: 'Disc %', type: 'number', align: 'r', w: 55 }, { k: 'sch', label: 'Scheme / Disc ₹', type: 'number', align: 'r', w: 70, ph: '₹ off' }, { k: 'tax', label: 'GST %', type: 'number', align: 'r', w: 55 }, { k: 'sell', label: 'Selling price to shop / strip', type: 'number', align: 'r', w: 100 }, { k: 'mrp', label: 'MRP / strip', type: 'number', align: 'r', w: 78 },
       { k: 'amt', label: 'Amount (incl. GST)', type: 'calc', align: 'r', calc: function (l) { return PD.n2(svc.wCalcLine(l).amount); } },
       { k: 'rack', label: 'Shelf', w: 70, ph: 'shelf' }, { k: 'del', type: 'del', always: true }],
     onItem: onItem,
@@ -40,7 +40,7 @@ PD.views.wadd = { render: function (host) {
   function billDiscLines(ls) {
     var bd = PD.num($('#bd', host).value), t = 0; ls.forEach(function (l) { if (l.itemId || l.newName) t += svc.wCalcLine(l).taxable; });
     if (!(bd > 0) || !(t > 0)) return ls; bd = Math.min(bd, t);
-    return ls.map(function (l) { var c = {}; Object.keys(l).forEach(function (k) { c[k] = l[k]; }); if (l.itemId || l.newName) c.disc = Math.round((100 - (100 - PD.num(l.disc)) * (1 - bd / t)) * 1e6) / 1e6; return c; });
+    return ls.map(function (l) { var c = {}; Object.keys(l).forEach(function (k) { c[k] = l[k]; }); if (l.itemId || l.newName) c.bshare = Math.round(bd * svc.wCalcLine(l).taxable / t * 1e4) / 1e4; return c; });
   }
   grid.addLine(false);
   var bscan = $('#bscan', host), bfb = $('#bfb', host);
@@ -69,7 +69,11 @@ PD.views.wadd = { render: function (host) {
   $('#up', host).onclick = function () {
     PD.billUpload(function (res, info) {
       grid.setLines(grid.lines().filter(function (l) { return l.itemId || l.newName; }).concat(res.lines));
-      PD.toast(res.lines.length + ' lines taken from ' + info.name + (res.fresh ? ' - ' + res.fresh + ' new medicine(s) will be created' : '') + (res.skipped ? ' - ' + res.skipped + ' rows skipped' : '') + '. Check them against the bill, then Save.', 'ok');
+      var bh = res.bill || {};   /* header read from the bill: invoice no, whole-bill discount, supplier */
+      if (bh.invNo && !$('#bill', host).value) $('#bill', host).value = bh.invNo;
+      if (bh.billDisc > 0) { $('#bd', host).value = bh.billDisc; grid.setLines(grid.lines()); }
+      if (bh.supplier && !$('#sup', host).value) { var sn = String(bh.supplier).toLowerCase(), sm = d.suppliers.find(function (x) { var n = String(x.name).toLowerCase(); return n.indexOf(sn) >= 0 || sn.indexOf(n) >= 0; }); if (sm) $('#sup', host).value = sm.name; }
+      PD.toast(res.lines.length + ' lines taken from ' + info.name + (res.fresh ? ' - ' + res.fresh + ' new medicine(s) will be created' : '') + (res.skipped ? ' - ' + res.skipped + ' rows skipped' : '') + (bh.billDisc > 0 ? ' - whole-bill discount ₹' + PD.n2(bh.billDisc) + ' filled in' : '') + '. Check them against the bill, then Save.', 'ok');
     });
   };
   $('#sv', host).onclick = function () {

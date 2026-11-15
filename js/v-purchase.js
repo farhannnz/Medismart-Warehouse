@@ -64,9 +64,9 @@ function supOpts() { return [['', '— select supplier —']].concat(PD.DB.suppl
 function monthVal(e) { return e || ''; }
 function invoiceView(b) {
   var s = svc.supplier(b.supplierId);
-  return '<div class="row sp"><div><b>' + esc(b.no) + '</b> • Supplier inv ' + esc(b.invNo || '-') + '<br><span class="mut">' + esc(s ? s.name : '') + ' • ' + PD.fmtDate(b.date) + ' • ' + esc(b.payMode) + '</span></div><div class="r"><b style="font-size:20px">' + PD.money(b.total) + '</b></div></div><div class="tw" style="margin-top:12px"><table class="t"><thead><tr><th>Item</th><th>Batch</th><th>Expiry</th><th class="r">Qty</th><th class="r">Free</th><th class="r">Rate</th><th class="r">MRP</th><th class="r">Disc</th><th class="r">GST</th><th class="r">Amount</th></tr></thead><tbody>' +
-    b.lines.map(function (l) { return '<tr><td><b>' + esc(svc.itemName(l.itemId)) + '</b></td><td>' + esc(l.batchNo) + '</td><td>' + PD.expBadge(l.expiry) + '</td><td class="r">' + PD.qty(l.qty) + ' ' + (l.unit === 'purchase' ? 'box' : '') + '</td><td class="r">' + PD.qty(l.free) + '</td><td class="r">' + PD.n2(l.rate) + '</td><td class="r">' + PD.n2(l.mrp) + '</td><td class="r">' + l.disc + '%</td><td class="r">' + l.tax + '%</td><td class="r">' + PD.n2(l.amount) + '</td></tr>'; }).join('') +
-    '</tbody><tfoot><tr><td colspan="9" class="r">Taxable ' + PD.n2(b.taxable) + ' + GST ' + PD.n2(b.tax) + '</td><td class="r">' + PD.n2(b.total) + '</td></tr></tfoot></table></div>';
+  return '<div class="row sp"><div><b>' + esc(b.no) + '</b> • Supplier inv ' + esc(b.invNo || '-') + '<br><span class="mut">' + esc(s ? s.name : '') + ' • ' + PD.fmtDate(b.date) + ' • ' + esc(b.payMode) + '</span></div><div class="r"><b style="font-size:20px">' + PD.money(b.total) + '</b></div></div><div class="tw" style="margin-top:12px"><table class="t"><thead><tr><th>Item</th><th>Batch</th><th>Expiry</th><th class="r">Qty</th><th class="r">Free</th><th class="r">Rate</th><th class="r">MRP</th><th class="r">Disc</th><th class="r">Scheme ₹</th><th class="r">GST</th><th class="r">Amount</th></tr></thead><tbody>' +
+    b.lines.map(function (l) { return '<tr><td><b>' + esc(svc.itemName(l.itemId)) + '</b></td><td>' + esc(l.batchNo) + '</td><td>' + PD.expBadge(l.expiry) + '</td><td class="r">' + PD.qty(l.qty) + ' ' + (l.unit === 'purchase' ? 'box' : '') + '</td><td class="r">' + PD.qty(l.free) + '</td><td class="r">' + PD.n2(l.rate) + '</td><td class="r">' + PD.n2(l.mrp) + '</td><td class="r">' + l.disc + '%</td><td class="r">' + (l.sch ? PD.n2(l.sch) : '') + '</td><td class="r">' + l.tax + '%</td><td class="r">' + PD.n2(l.amount) + '</td></tr>'; }).join('') +
+    '</tbody><tfoot><tr><td colspan="10" class="r">Taxable ' + PD.n2(b.taxable) + ' + GST ' + PD.n2(b.tax) + '</td><td class="r">' + PD.n2(b.total) + '</td></tr></tfoot></table></div>';
 }
 PD.showPurchase = function (b) { PD.modal({ title: 'Purchase invoice', size: 'xl', body: invoiceView(b), foot: [{ label: 'Close' }, { label: 'Print', icon: 'print', fn: function () { PD.printHTML('<h2>' + esc(PD.DB.shop.name) + '</h2>' + invoiceView(b)); return false; } }] }); };
 
@@ -92,7 +92,7 @@ PD.views.purchase = { render: function (host, arg) {
       '<div class="msbtns"><button class="mb" id="clr">✕ Delete</button><button class="mb" id="imp">Import</button><button class="mb" id="pv">◀ Previous</button><button class="mb" id="nx">Next ▶</button><span class="sp"></span><button class="mb" id="nw">New</button><button class="mb" id="sv">💾 Save</button></div></div>';
     var sup = $('[data-k=supplierId]', el);
     var poSel = $('#po', el), dnSel = $('#dn', el);
-    function newLine() { return { itemId: '', batchNo: '', expiry: '', unit: 'purchase', qty: '', free: '', rate: '', mrp: '', disc: 0, tax: D.settings.defaultTax }; }
+    function newLine() { return { itemId: '', batchNo: '', expiry: '', unit: 'purchase', qty: '', free: '', rate: '', mrp: '', disc: 0, sch: '', tax: D.settings.defaultTax }; }
     function unitOpts(l) { var it = l.itemId ? svc.item(l.itemId) : null; return it ? [['purchase', it.punit || 'Box'], ['sale', it.unit || 'Strip']] : [['purchase', 'Box'], ['sale', 'Strip']]; }
     grid = PD.grid($('#gr', el), {
       id: 'pi-grid', newLine: newLine,
@@ -101,7 +101,7 @@ PD.views.purchase = { render: function (host, arg) {
         { k: 'item', label: 'Item', type: 'item', always: true },
         { k: 'batchNo', label: 'Batch no.', w: 90 }, { k: 'expiry', label: 'Expiry', type: 'month', w: 130 },
         { k: 'unit', label: 'Unit', type: 'select', options: unitOpts, w: 80 }, { k: 'qty', label: 'Qty', type: 'number', align: 'r', w: 70 }, { k: 'free', label: 'Free', type: 'number', align: 'r', w: 60 },
-        { k: 'rate', label: 'Rate / unit', type: 'number', align: 'r', w: 90 }, { k: 'mrp', label: 'MRP (per ' + 'strip)', type: 'number', align: 'r', w: 80 }, { k: 'disc', label: 'Disc %', type: 'number', align: 'r', w: 60 }, { k: 'tax', label: 'GST %', type: 'number', align: 'r', w: 60 },
+        { k: 'rate', label: 'Rate / unit', type: 'number', align: 'r', w: 90 }, { k: 'mrp', label: 'MRP (per ' + 'strip)', type: 'number', align: 'r', w: 80 }, { k: 'disc', label: 'Disc %', type: 'number', align: 'r', w: 60 }, { k: 'sch', label: 'Scheme / Disc ₹', type: 'number', align: 'r', w: 75, ph: '₹ off' }, { k: 'tax', label: 'GST %', type: 'number', align: 'r', w: 60 },
         { k: 'amt', label: 'Amount', type: 'calc', align: 'r', calc: function (l) { return PD.n2(svc.calcPurchaseLine(l).amount); } }, { k: 'del', label: '', type: 'del', always: true }
       ],
       onItem: function (l, it) {

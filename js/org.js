@@ -126,21 +126,22 @@ PD.views.wpnl = { render: function (host, arg) {
   C.listShops().then(function (shops) {
     return Promise.all(shops.map(function (s) { return C.readDays(s.id, from, to).catch(function () { return []; }); })).then(function (all) {
       var rows = shops.map(function (s, i) {
-        var r = { id: s.id, code: s.code, name: s.name, days: all[i], bills: 0, total: 0, sales: 0, cost: 0, returns: 0, retCost: 0, expense: 0, profit: 0 };
-        all[i].forEach(function (d) { ['bills', 'total', 'sales', 'cost', 'returns', 'retCost', 'expense', 'profit'].forEach(function (k) { r[k] += d[k] || 0; }); });
+        var r = { id: s.id, code: s.code, name: s.name, days: all[i], bills: 0, total: 0, sales: 0, cost: 0, returns: 0, retCost: 0, expense: 0, profit: 0, listCost: 0, retList: 0 };
+        all[i].forEach(function (d) { ['bills', 'total', 'sales', 'cost', 'returns', 'retCost', 'expense', 'profit'].forEach(function (k) { r[k] += d[k] || 0; }); r.listCost += d.listCost != null ? d.listCost : (d.cost || 0); r.retList += d.retList != null ? d.retList : (d.retCost || 0); });
         r.netCost = PD.r2(r.cost - r.retCost); r.gross = PD.r2(r.sales - r.returns - r.netCost); r.margin = (r.sales - r.returns) > 0 ? PD.r2(r.gross / (r.sales - r.returns) * 100) : 0;
+        r.grossList = PD.r2(r.sales - r.returns - (r.listCost - r.retList)); r.gain = PD.r2(r.gross - r.grossList);
         ['total', 'sales', 'cost', 'returns', 'retCost', 'expense', 'profit'].forEach(function (k) { r[k] = PD.r2(r[k]); });
         return r;
       });
-      if (PD.svc.wMargin) { var w = PD.svc.wMargin(from, to); rows.push({ id: 'wh', code: 'WH', name: (PD.DB.settings.whName || 'Warehouse') + ' (bills to shops)', days: [], bills: w.bills, total: w.sales, sales: w.sales, cost: w.cost, returns: w.returns, retCost: w.retCost, expense: 0, netCost: PD.r2(w.cost - w.retCost), gross: w.gross, margin: (w.sales - w.returns) > 0 ? PD.r2(w.gross / (w.sales - w.returns) * 100) : 0, profit: w.gross }); }
+      if (PD.svc.wMargin) { var w = PD.svc.wMargin(from, to); rows.push({ id: 'wh', code: 'WH', name: (PD.DB.settings.whName || 'Warehouse') + ' (bills to shops)', days: [], bills: w.bills, total: w.sales, sales: w.sales, cost: w.cost, returns: w.returns, retCost: w.retCost, expense: 0, netCost: PD.r2(w.cost - w.retCost), gross: w.gross, grossList: w.grossList != null ? w.grossList : w.gross, gain: w.schemeGain || 0, margin: (w.sales - w.returns) > 0 ? PD.r2(w.gross / (w.sales - w.returns) * 100) : 0, profit: w.gross }); }
       var stock = PD.svc.wStockValue ? PD.svc.wStockValue() : null;
       PD.report(out, { id: 'wpnl', title: 'Profit & Loss: ' + PD.fmtDate(from) + ' to ' + PD.fmtDate(to), load: function () { return { cols: [
         { k: 'code', label: 'Code' }, { k: 'name', label: 'Shop', fmt: function (v) { return '<b>' + esc(v) + '</b>'; } }, { k: 'bills', label: 'Bills', align: 'r', sum: true, fmtSum: function (t) { return String(Math.round(t)); } },
         { k: 'total', label: 'Collected (with GST)', align: 'r', sum: true, fmt: PD.n2 }, { k: 'sales', label: 'Sales (ex GST)', align: 'r', sum: true, fmt: PD.n2 }, { k: 'returns', label: 'Returns', align: 'r', sum: true, fmt: PD.n2 },
-        { k: 'netCost', label: 'Cost of medicines', align: 'r', sum: true, fmt: PD.n2 }, { k: 'gross', label: 'Gross profit', align: 'r', sum: true, fmt: PD.n2 },
+        { k: 'netCost', label: 'Real cost of medicines', align: 'r', sum: true, fmt: PD.n2 }, { k: 'grossList', label: 'Gross profit at bill rate', align: 'r', sum: true, fmt: PD.n2 }, { k: 'gain', label: 'Scheme / free / discount gain', align: 'r', sum: true, fmt: PD.n2 }, { k: 'gross', label: 'Real gross profit', align: 'r', sum: true, fmt: PD.n2 },
         { k: 'margin', label: 'Margin %', align: 'r', fmt: function (v) { return PD.n2(v) + '%'; } }, { k: 'expense', label: 'Expenses', align: 'r', sum: true, fmt: PD.n2 },
         { k: 'profit', label: 'Net profit', align: 'r', sum: true, fmt: function (v) { return '<b style="color:' + (v < 0 ? '#c62828' : '#2e7d32') + '">' + PD.n2(v) + '</b>'; }, raw: function (r) { return r.profit; } }],
-        rows: rows, note: 'Net profit total = the whole business (the warehouse row shows its margin on bills to your own shops). Each shop sends its figures automatically while it is open and online.' + (stock != null ? ' Stock in the warehouse now (at cost): ₹' + PD.n2(stock) + '.' : '') + ' Click a shop for day-wise figures.' }; },
+        rows: rows, note: 'Gross profit at bill rate = sales against the plain purchase rate (no free strips, discounts or schemes). Real gross profit = after all of them; the gain column is the difference. Net profit total = the whole business (the warehouse row shows its margin on bills to your own shops). Each shop sends its figures automatically while it is open and online.' + (stock != null ? ' Stock in the warehouse now (at cost): ₹' + PD.n2(stock) + '.' : '') + ' Click a shop for day-wise figures.' }; },
         drill: function (r) {
           var ds = r.days.slice().sort(function (a, b) { return a.date < b.date ? -1 : 1; });
           PD.modal({ title: r.name + ': day-wise', size: 'lg', body: '<table class="t"><thead><tr><th>Date</th><th class="r">Bills</th><th class="r">Sales</th><th class="r">Returns</th><th class="r">Cost</th><th class="r">Expenses</th><th class="r">Net profit</th></tr></thead><tbody>' +

@@ -71,14 +71,15 @@ function lotOfLine(l) {
   return p ? p.lot : D().lots.find(function (lt) { return lt.itemId === l.itemId && lt.batchNo === l.batchNo; });
 }
 svc.wMargin = function (from, to) {
-  var r = { bills: 0, sales: 0, cost: 0, returns: 0, retCost: 0 };
-  D().wdisp.forEach(function (x) { if (!x.bill || x.date < from || x.date > to) return; r.bills++; x.lines.forEach(function (l) { r.sales += l.qty * l.rate; r.cost += l.qty * (l.cost || 0); }); });
+  var r = { bills: 0, sales: 0, cost: 0, listCost: 0, returns: 0, retCost: 0, retList: 0 };
+  D().wdisp.forEach(function (x) { if (!x.bill || x.date < from || x.date > to) return; r.bills++; x.lines.forEach(function (l) { r.sales += l.qty * l.rate; r.cost += l.qty * (l.cost || 0); r.listCost += l.qty * (l.listCost != null ? l.listCost : (l.cost || 0)); }); });
   D().wret.forEach(function (x) {
     var d = x.doneOn || x.date; if (x.status !== 'Accepted' || d < from || d > to) return;
-    x.lines.forEach(function (l) { if (!l.credit) return; r.returns += l.qty * l.rate; if (l.outcome === 'stock') { var lot = lotOfLine(l); r.retCost += l.qty * (lot ? lot.cost : l.rate); } });
+    x.lines.forEach(function (l) { if (!l.credit) return; r.returns += l.qty * l.rate; if (l.outcome === 'stock') { var lot = lotOfLine(l); r.retCost += l.qty * (lot ? lot.cost : l.rate); r.retList += l.qty * (lot ? (lot.listCost != null ? lot.listCost : lot.cost) : l.rate); } });
   });
   Object.keys(r).forEach(function (k) { r[k] = PD.r2(r[k]); });
-  r.gross = PD.r2(r.sales - r.returns - (r.cost - r.retCost)); return r;
+  r.gross = PD.r2(r.sales - r.returns - (r.cost - r.retCost));
+  r.grossList = PD.r2(r.sales - r.returns - (r.listCost - r.retList)); r.schemeGain = PD.r2(r.gross - r.grossList); return r;   /* grossList = profit at the plain bill rate; gross = real profit after free strips, discounts & schemes */
 };
 
 /* ---------- company barcodes on the medicine box / strip ----------
@@ -143,11 +144,12 @@ svc.wImportStock = function (rows) {
 /* ---------- add stock ---------- */
 /* one bill line: strips bought + free strips, rate per strip, discount %, GST % */
 svc.wCalcLine = function (l) {
-  var q = PD.num(l.strips), f = PD.num(l.free), taxable = q * PD.num(l.cost) * (1 - PD.num(l.disc) / 100), tax = taxable * PD.num(l.tax) / 100;
-  return { n: q + f, taxable: PD.r2(taxable), taxAmt: PD.r2(tax), amount: PD.r2(taxable + tax), unit: q + f > 0 ? taxable / (q + f) : 0 };
+  /* real cost = rate x strips, less discount %, less flat scheme / discount Rs on the line (sch), less this line's share of the whole-bill discount (bshare); the free strips share that cost */
+  var q = PD.num(l.strips), f = PD.num(l.free), list = q * PD.num(l.cost), taxable = Math.max(0, list * (1 - PD.num(l.disc) / 100) - PD.num(l.sch) - PD.num(l.bshare)), tax = taxable * PD.num(l.tax) / 100;
+  return { n: q + f, list: PD.r2(list), taxable: PD.r2(taxable), taxAmt: PD.r2(tax), amount: PD.r2(taxable + tax), unit: q + f > 0 ? taxable / (q + f) : 0, listUnit: PD.num(l.cost) };
 };
 /* read a supplier bill sheet (CSV / Excel rows as arrays) into Add Stock lines. Unknown medicines are flagged as new. */
-svc.wBillPats = { name: /^(productname|product|itemname|item|medicine|medicinename|description|particulars|name)$/, batch: /^(batch|batchno|batchnumber|lot)$/, exp: /^(exp|expiry|expirydate|expdate|expiryon)$/, hsn: /^(hsn|hsncode|hsnsac)$/, mrp: /^(mrp|mrpstrip|maxretailprice)$/, rate: /^(rate|ptr|pts|purchaserate|purchaseprice|cost|price|unitrate)$/, qty: /^(qty|quantity|strips|nos|noofstrips)$/, free: /^(free|freeqty|fqty|bonus|scheme)$/, disc: /^(disc|discount|disc%|discount%|dis|dis%|cd|cd%)$/, tax: /^(gst|gst%|tax|tax%|gstrate|igst|igst%)$/, mfr: /^(mfr|mfg|company|manufacturer|mfrname)$/, rack: /^(shelf|rack|shelfno|rackno|shelfname|location)$/ };
+svc.wBillPats = { name: /^(productname|product|itemname|item|medicine|medicinename|description|particulars|name)$/, batch: /^(batch|batchno|batchnumber|lot)$/, exp: /^(exp|expiry|expirydate|expdate|expiryon)$/, hsn: /^(hsn|hsncode|hsnsac)$/, mrp: /^(mrp|mrpstrip|maxretailprice)$/, rate: /^(rate|ptr|pts|purchaserate|purchaseprice|cost|price|unitrate)$/, qty: /^(qty|quantity|strips|nos|noofstrips)$/, free: /^(free|freeqty|fqty|bonus|scheme)$/, disc: /^(disc|discount|disc%|discount%|dis|dis%|cd|cd%|disc1|disc1%)$/, disc2: /^(disc2|disc2%|discount2|dis2|dis2%)$/, sch: /^(sch|schamt|schemeamt|schemeamount|schdisc|schemediscount|discamt|discountamt|discountamount|disc₹)$/, tax: /^(gst|gst%|tax|tax%|gstrate|igst|igst%)$/, mfr: /^(mfr|mfg|company|manufacturer|mfrname)$/, rack: /^(shelf|rack|shelfno|rackno|shelfname|location)$/ };
 /* guess the heading row and which column is which, for the column-mapping dialog */
 svc.wGuessCols = function (rows) {
   var norm = function (s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9%]/g, ''); }, pats = svc.wBillPats, best = { hi: 0, map: {}, n: -1 };
@@ -181,7 +183,7 @@ svc.wParseBill = function (rows) {
     var r = rows[i] || [], g = function (f) { return map[f] == null ? '' : r[map[f]]; }, nm = String(g('name') == null ? '' : g('name')).trim().replace(/\s+/g, ' ');
     if (!nm || !(num(g('qty')) > 0)) { if (nm || num(g('qty'))) skipped++; continue; }
     var it = byName[nm.toLowerCase()], mrp = num(g('mrp')), tax = map.tax != null ? num(g('tax')) : (it ? it.tax : D().settings.defaultTax || 0);
-    var l = { itemId: it ? it.id : '', newName: it ? '' : nm, mfr: String(g('mfr') || '').trim(), hsn: String(g('hsn') || (it && it.hsn) || '').trim(), batchNo: String(g('batch') || '').trim(), expiry: expOf(g('exp')), rack: String(g('rack') || (it && it.rack) || '').trim(), strips: num(g('qty')), free: num(g('free')), cost: num(g('rate')), disc: num(g('disc')), tax: tax, mrp: mrp || (it ? it.mrp : 0), sell: '' };
+    var l = { itemId: it ? it.id : '', newName: it ? '' : nm, mfr: String(g('mfr') || '').trim(), hsn: String(g('hsn') || (it && it.hsn) || '').trim(), batchNo: String(g('batch') || '').trim(), expiry: expOf(g('exp')), rack: String(g('rack') || (it && it.rack) || '').trim(), strips: num(g('qty')), free: num(g('free')), cost: num(g('rate')), disc: PD.r2(100 - (100 - num(g('disc'))) * (100 - num(g('disc2'))) / 100), sch: num(g('sch')), tax: tax, mrp: mrp || (it ? it.mrp : 0), sell: '' };
     var last = it && D().lots.filter(function (x) { return x.itemId === it.id; }).pop(), c = svc.wCalcLine(l);
     l.sell = last ? last.sell : PD.r2(Math.max(l.mrp * 0.72, c.unit));
     out.push(l);
@@ -263,7 +265,8 @@ svc.wAddStock = function (lines, meta) {
     var c = svc.wCalcLine(l), hsn = String(l.hsn || it.hsn || '').trim();
     if (hsn && !it.hsn) it.hsn = hsn;
     var lot = { id: PD.uid('lt'), no: no, itemId: l.itemId, batchNo: String(l.batchNo).trim(), expiry: l.expiry, mrp: PD.num(l.mrp), cost: PD.r2(c.unit), sell: PD.num(l.sell) > 0 ? PD.num(l.sell) : PD.r2(c.unit), n: c.n, gone: {}, date: meta.date || PD.today(), supplier: meta.supplier || '', bill: meta.bill || '', by: PD.user ? PD.user.name : '',
-      hsn: hsn, free: PD.num(l.free), rate: PD.num(l.cost), disc: PD.num(l.disc), tax: PD.num(l.tax), taxable: c.taxable, taxAmt: c.taxAmt };
+      hsn: hsn, free: PD.num(l.free), rate: PD.num(l.cost), disc: PD.num(l.disc), sch: PD.num(l.sch), bshare: PD.num(l.bshare), tax: PD.num(l.tax), taxable: c.taxable, taxAmt: c.taxAmt,
+      listCost: PD.r2(c.listUnit) /* plain bill rate per strip: no free strips, discounts or schemes. cost above is the REAL cost after all of them */ };
     D().lots.push(lot); made.push(lot);
   });
   if (!made.length) throw new Error('Add at least one medicine with number of strips');
@@ -361,7 +364,7 @@ svc.wDispatch = function (reqId, note) {
   order.forEach(function (k) {
     var g = by[k], lot = g.lot, it = svc.item(lot.itemId), rate = PD.num(lot.sell) > 0 ? PD.num(lot.sell) : PD.num(lot.cost), amt = PD.r2(g.serials.length * rate);   /* billed to the shop at the warehouse's price to shops, no GST */
     taxable += amt;
-    lines.push({ itemId: it.id, lotId: lot.id, batchNo: lot.batchNo, expiry: lot.expiry, mrp: lot.mrp, rate: rate, cost: lot.cost, qty: g.serials.length, tax: it.tax || 0, serials: g.serials });   /* tax = the medicine's GST for the shop's own sales; nothing is charged on this bill */
+    lines.push({ itemId: it.id, lotId: lot.id, batchNo: lot.batchNo, expiry: lot.expiry, mrp: lot.mrp, rate: rate, cost: lot.cost, listCost: lot.listCost != null ? lot.listCost : lot.cost, qty: g.serials.length, tax: it.tax || 0, serials: g.serials });   /* tax = the medicine's GST for the shop's own sales; nothing is charged on this bill */
     g.idx.forEach(function (i) { lot.gone[i] = { s: 'out', ref: no, shop: shop.name, d: PD.today() }; });
   });
   var d = { id: PD.uid('wd'), no: no, reqId: r.id, reqNo: r.no, extNo: r.extNo, shopId: r.shopId, date: PD.today(), by: PD.user ? PD.user.name : '', note: note || '', lines: lines, serials: r.picked.slice(), taxable: PD.r2(taxable), tax: PD.r2(tax), total: PD.r2(taxable + tax), status: 'Sent', bill: true };

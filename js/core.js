@@ -176,10 +176,11 @@ function addBatch(l, extra) {
   if (ex) {
     var tot = ex.qty + l.qty;
     ex.rate = tot > 0 ? PD.r2((ex.rate * ex.qty + l.rate * l.qty) / tot) : l.rate;
+    if (l.listRate != null) ex.listRate = tot > 0 ? PD.r2(((ex.listRate != null ? ex.listRate : ex.rate) * ex.qty + l.listRate * l.qty) / tot) : l.listRate;
     ex.qty = PD.r2(tot); if (extra) for (var k in extra) ex[k] = extra[k];
     return ex;
   }
-  var b = { id: PD.uid('b'), itemId: l.itemId, batchNo: l.batchNo || 'NA', expiry: l.expiry || '', mrp: l.mrp, rate: l.rate, qty: PD.r2(l.qty), supplierId: l.supplierId || '', purId: l.purId || '', added: PD.today() };
+  var b = { id: PD.uid('b'), itemId: l.itemId, batchNo: l.batchNo || 'NA', expiry: l.expiry || '', mrp: l.mrp, rate: l.rate, listRate: l.listRate != null ? l.listRate : l.rate, qty: PD.r2(l.qty), supplierId: l.supplierId || '', purId: l.purId || '', added: PD.today() };
   if (extra) for (var k2 in extra) b[k2] = extra[k2];
   D().batches.push(b);
   return b;
@@ -188,9 +189,9 @@ function addBatch(l, extra) {
 /* ---------- purchase ---------- */
 svc.calcPurchaseLine = function (l) {
   var it = svc.item(l.itemId), conv = (l.unit === 'purchase' && it && it.conv > 0) ? it.conv : 1;
-  var gross = PD.num(l.qty) * PD.num(l.rate), dsc = gross * PD.num(l.disc) / 100, taxable = gross - dsc, tax = taxable * PD.num(l.tax) / 100;
+  var gross = PD.num(l.qty) * PD.num(l.rate), dsc = gross * PD.num(l.disc) / 100, taxable = Math.max(0, gross - dsc - PD.num(l.sch)), tax = taxable * PD.num(l.tax) / 100;   /* sch = flat scheme / discount Rs on the line */
   var units = PD.num(l.qty) * conv + PD.num(l.free) * conv;
-  return { conv: conv, qtyS: PD.num(l.qty) * conv, freeS: PD.num(l.free) * conv, units: units, taxable: PD.r2(taxable), taxAmt: PD.r2(tax), amount: PD.r2(taxable + tax), costPerUnit: units > 0 ? taxable / units : 0 };
+  return { conv: conv, qtyS: PD.num(l.qty) * conv, freeS: PD.num(l.free) * conv, units: units, taxable: PD.r2(taxable), taxAmt: PD.r2(tax), amount: PD.r2(taxable + tax), costPerUnit: units > 0 ? taxable / units : 0, listPerUnit: conv > 0 ? PD.num(l.rate) / conv : 0 };
 };
 svc.postPurchase = function (inv) {
   if (!inv.supplierId) throw new Error('Select a supplier');
@@ -201,8 +202,8 @@ svc.postPurchase = function (inv) {
     if (!(PD.num(l.qty) > 0)) throw new Error('Quantity must be greater than zero (' + svc.itemName(l.itemId) + ')');
     var it = svc.item(l.itemId), c = svc.calcPurchaseLine(l);
     taxable += c.taxable; tax += c.taxAmt;
-    var line = { itemId: l.itemId, batchNo: (it.batch === false ? 'NA' : (l.batchNo || 'NA')), expiry: it.batch === false ? '' : (l.expiry || ''), qty: PD.num(l.qty), unit: l.unit || 'sale', free: PD.num(l.free), rate: PD.num(l.rate), mrp: PD.num(l.mrp), disc: PD.num(l.disc), tax: PD.num(l.tax), conv: c.conv, qtyS: c.qtyS, freeS: c.freeS, taxable: c.taxable, taxAmt: c.taxAmt, amount: c.amount, cost: PD.r2(c.costPerUnit) };
-    var b = addBatch({ itemId: l.itemId, batchNo: line.batchNo, expiry: line.expiry, mrp: line.mrp, rate: line.cost, qty: c.units, supplierId: inv.supplierId, purId: id });
+    var line = { itemId: l.itemId, batchNo: (it.batch === false ? 'NA' : (l.batchNo || 'NA')), expiry: it.batch === false ? '' : (l.expiry || ''), qty: PD.num(l.qty), unit: l.unit || 'sale', free: PD.num(l.free), rate: PD.num(l.rate), mrp: PD.num(l.mrp), disc: PD.num(l.disc), sch: PD.num(l.sch), tax: PD.num(l.tax), conv: c.conv, qtyS: c.qtyS, freeS: c.freeS, taxable: c.taxable, taxAmt: c.taxAmt, amount: c.amount, cost: PD.r2(c.costPerUnit), listCost: PD.r2(c.listPerUnit) };
+    var b = addBatch({ itemId: l.itemId, batchNo: line.batchNo, expiry: line.expiry, mrp: line.mrp, rate: line.cost, listRate: line.listCost, qty: c.units, supplierId: inv.supplierId, purId: id });
     line.batchId = b.id;
     svc.move({ date: date, itemId: l.itemId, batchId: b.id, type: 'PUR', qty: c.units, rate: line.cost, ref: no, refId: id });
     return line;

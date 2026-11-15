@@ -26,7 +26,7 @@ svc.wSale = function (o) {
     var rate = PD.num(l.rate), disc = PD.num(l.disc); if (!(rate >= 0)) throw new Error('Enter the rate for ' + it.name); if (disc < 0 || disc > 100) throw new Error('Discount must be 0 to 100');
     var qty = l.serials.length, net = PD.r2(qty * rate * (1 - disc / 100)), t = o.gst ? PD.num(it.tax) : 0, tx = PD.r2(net * t / 100);
     taxable += net; tax += tx;
-    lines.push({ itemId: it.id, lotId: lot.id, batchNo: lot.batchNo, expiry: lot.expiry, mrp: lot.mrp, hsn: it.hsn || lot.hsn || '', rate: rate, cost: lot.cost, disc: disc, tax: t, qty: qty, net: net, taxAmt: tx, serials: l.serials.slice(), ret: [] });
+    lines.push({ itemId: it.id, lotId: lot.id, batchNo: lot.batchNo, expiry: lot.expiry, mrp: lot.mrp, hsn: it.hsn || lot.hsn || '', rate: rate, cost: lot.cost, listCost: lot.listCost != null ? lot.listCost : lot.cost, disc: disc, tax: t, qty: qty, net: net, taxAmt: tx, serials: l.serials.slice(), ret: [] });
   });
   if (!lines.length) throw new Error('Add at least one strip');
   taxable = PD.r2(taxable); tax = PD.r2(tax); var total = PD.r2(taxable + tax), got = PD.num(o.received);
@@ -59,10 +59,10 @@ var oM = svc.wMargin;
 svc.wMargin = function (from, to) {
   var r = oM(from, to);
   sales().forEach(function (s) {
-    if (s.date >= from && s.date <= to) { r.bills++; s.lines.forEach(function (l) { r.sales += l.net; r.cost += l.qty * (l.cost || 0); }); }
-    (s.returns || []).forEach(function (x) { if (x.date < from || x.date > to) return; r.returns += x.taxable; x.lines.forEach(function (l) { r.retCost += l.qty * (l.cost || 0); }); });
+    if (s.date >= from && s.date <= to) { r.bills++; s.lines.forEach(function (l) { r.sales += l.net; r.cost += l.qty * (l.cost || 0); r.listCost += l.qty * (l.listCost != null ? l.listCost : (l.cost || 0)); }); }
+    (s.returns || []).forEach(function (x) { if (x.date < from || x.date > to) return; r.returns += x.taxable; x.lines.forEach(function (l) { r.retCost += l.qty * (l.cost || 0); r.retList += l.qty * (l.listCost != null ? l.listCost : (l.cost || 0)); }); });
   });
-  Object.keys(r).forEach(function (k) { r[k] = PD.r2(r[k]); }); r.gross = PD.r2(r.sales - r.returns - (r.cost - r.retCost)); return r;
+  Object.keys(r).forEach(function (k) { r[k] = PD.r2(r[k]); }); r.gross = PD.r2(r.sales - r.returns - (r.cost - r.retCost)); r.grossList = PD.r2(r.sales - r.returns - (r.listCost - r.retList)); r.schemeGain = PD.r2(r.gross - r.grossList); return r;
 };
 
 function saleHTML(s) {

@@ -93,9 +93,10 @@ function editImage(srcCanvas) {
 }
 
 /* ---------- rows dialog: pick rows, say what each column is ---------- */
-var ROLES = [['', '— ignore —'], ['name', 'Medicine name'], ['qty', 'Qty'], ['free', 'Free'], ['batch', 'Batch'], ['exp', 'Expiry'], ['hsn', 'HSN'], ['mrp', 'MRP'], ['rate', 'Rate / strip'], ['disc', 'Disc %'], ['tax', 'GST %'], ['mfr', 'Manufacturer'], ['rack', 'Shelf']];
-var LABEL = { name: 'Product Name', qty: 'Qty', free: 'Free', batch: 'Batch', exp: 'Exp', hsn: 'HSN', mrp: 'MRP', rate: 'Rate', disc: 'Disc', tax: 'GST', mfr: 'Mfr', rack: 'Shelf' };
+var ROLES = [['', '— ignore —'], ['name', 'Medicine name'], ['qty', 'Qty'], ['free', 'Free'], ['batch', 'Batch'], ['exp', 'Expiry'], ['hsn', 'HSN'], ['mrp', 'MRP'], ['rate', 'Rate / strip'], ['disc', 'Disc %'], ['disc2', 'Disc 2 %'], ['sch', 'Scheme / Disc ₹'], ['tax', 'GST %'], ['mfr', 'Manufacturer'], ['rack', 'Shelf']];
+var LABEL = { name: 'Product Name', qty: 'Qty', free: 'Free', batch: 'Batch', exp: 'Exp', hsn: 'HSN', mrp: 'MRP', rate: 'Rate', disc: 'Disc', disc2: 'Disc2', sch: 'Sch', tax: 'GST', mfr: 'Mfr', rack: 'Shelf' };
 function pickRows(sheets, note, done) {
+  var pendingBill = lastBill; lastBill = null;
   var cur = 0, data, width, role, hi, on, MAX = 600, defShelf = '';
   var m = PD.modal({ title: 'Choose rows and columns', size: 'xl', sticky: true, body: '<div id="rb"></div>', foot: [{ label: 'Cancel' }, { label: 'Fill Purchase', cls: 'p', fn: go }] });
   var rb = PD.$('#rb', m.el);
@@ -136,18 +137,22 @@ function pickRows(sheets, note, done) {
     var rows = [role.map(function (r) { return r ? LABEL[r] : ''; })];
     data.forEach(function (r, i) { if (on[i]) { var o = []; for (var c = 0; c < width; c++) o.push(r[c] == null ? '' : r[c]); rows.push(o); } });
     if (rows.length < 2) { bigErr(new Error('Tick at least one row.')); return false; }
-    try { var res = svc.wParseBill(rows); if (defShelf.trim()) res.lines.forEach(function (l) { if (!l.rack) l.rack = defShelf.trim(); }); done(res); } catch (e) { bigErr(e); return false; }
+    try { var res = svc.wParseBill(rows); if (defShelf.trim()) res.lines.forEach(function (l) { if (!l.rack) l.rack = defShelf.trim(); }); res.bill = pendingBill; done(res); } catch (e) { bigErr(e); return false; }
   }
   load(0);
 }
 
 /* ---------- free AI reader (Google Gemini, free key from aistudio.google.com) ---------- */
 var KEYN = 'wh_gemini_key', MODEL = 'gemini-2.5-flash';
-var HEAD = ['Product Name', 'Qty', 'Free', 'Batch', 'Exp', 'HSN', 'MRP', 'Rate', 'Disc', 'GST', 'Mfr', 'Shelf'];
-var PROMPT = 'This is a medicine purchase bill / invoice from a supplier in India (it may be a photo, a PDF, or spreadsheet text, in any layout, possibly rotated). Extract EVERY medicine line item. Return ONLY a JSON array. Each element: {"name":string,"qty":number,"free":number,"batch":string,"exp":string,"hsn":string,"mrp":number,"rate":number,"disc":number,"gst":number,"amount":number,"mfr":string,"shelf":string}. ' +
-  'ROW ALIGNMENT IS CRITICAL: read each printed line completely, left to right, and keep every value of that line together. Never mix the name, batch, qty, rate or amount of one line with another line. Count the printed lines first and return exactly that many elements, in the same order, even if two lines have the same name. amount = the line amount printed on the bill for that line (0 if none). A line is right only if amount is about qty x rate (the discount and GST may change it a little). ' +
-  'qty = number of strips/packs billed (not the free ones). free = free / bonus quantity. exp = expiry as MM/YYYY. rate = purchase rate per strip before discount and GST (PTR/PTS). mrp = MRP per strip. disc = discount %. gst = GST % (if CGST and SGST are separate, add them). mfr = manufacturer/company if printed. shelf = rack/shelf only if printed, else "". ' +
-  'Use "" for text and 0 for numbers that are not on the bill. Keep medicine names exactly as printed. Do NOT include totals, headers, tax summary or address rows.';
+var HEAD = ['Product Name', 'Qty', 'Free', 'Batch', 'Exp', 'HSN', 'MRP', 'Rate', 'Disc', 'Disc2', 'Sch', 'GST', 'Mfr', 'Shelf'];
+var lastBill = null;   /* bill header read by the AI (invoice no, whole-bill discount...) for the screen to fill in */
+var PROMPT = 'This is a medicine / FMCG purchase bill (tax invoice) from a supplier in India. It may be a photo, a PDF, or spreadsheet text, in any layout (laser print, dot-matrix print, multi-page "continued on page 2", rotated, with handwritten tick marks or pen corrections that you must ignore). Read ALL pages. ' +
+  'Return ONLY a JSON object: {"bill":{"supplier":string,"invNo":string,"date":string,"billDisc":number,"subTotal":number,"netTotal":number},"lines":[{"name":string,"qty":number,"free":number,"batch":string,"exp":string,"hsn":string,"mrp":number,"rate":number,"disc":number,"disc2":number,"sch":number,"gst":number,"amount":number,"mfr":string,"shelf":string}]}. ' +
+  'ROW ALIGNMENT IS CRITICAL: read each printed line completely, left to right, and keep every value of that line together. Never mix the name, batch, qty, rate or amount of one line with another. Count the printed lines first and return exactly that many elements in order, even if two lines have the same name. Lines of page 2 / 3 continue the same list. ' +
+  'LINE FIELDS: qty = quantity billed (strips / pcs / packs, NOT the free ones). free = free / bonus quantity (a scheme written like 10+2 or "buy 10 get 2" means qty 10, free 2). rate = price per ONE unit before discount and GST (PTR / PTS / "Pc Price" / "Rate"). mrp = MRP per unit; if there is no MRP column but the item name carries it (like "Senso Paste 75g 135/-") take that number as mrp and remove it from the name. exp = expiry as MM/YYYY (batch and expiry may be printed on a separate line under the item). ' +
+  'DISCOUNTS: disc = the first discount % column (Disc %). disc2 = a second discount % column if the bill has one (Disc1 %, CD %, 2nd disc). sch = a per-line scheme / discount AMOUNT in rupees (columns like SCH Amt, Scheme, Disc Amt, Other Disc Amt) as a total for that line, not per unit; 0 if none. gst = GST % (add CGST + SGST if shown separately; use the line GST rate column). amount = the final line amount printed for that line (net of discounts; it may be with or without GST, copy what is printed; 0 if none). A line is right when amount is about qty x rate less its discounts / scheme (GST may be added on top). ' +
+  'BILL FIELDS: supplier = the seller company name. invNo = invoice number. date = invoice date as YYYY-MM-DD. billDisc = the TOTAL of discounts printed at the bottom of the whole bill that are NOT already inside the line amounts (lines like "Less: Scheme/discount", "Less Discount", "Sch.Less", "Dis.Less", "CD", "Cash discount"); positive number; 0 if none (do NOT use rounding off, and do NOT count a discount that is already shown per line). subTotal = the printed total of all line amounts before bill-level discount and tax (0 if not printed). netTotal = final payable / grand total. ' +
+  'Use "" for text and 0 for numbers that are not on the bill. Keep medicine names exactly as printed. Do NOT include totals, headers, tax summary, scheme/initiative summary or address rows as lines.';
 /* key typed in the box (this browser only). Empty = use the server (/api/bill-ai, key in Vercel env GEMINI_API_KEY) */
 function getKey() { try { return localStorage.getItem(KEYN) || ''; } catch (e) { return ''; } }
 function setKey(k) { try { if (k) localStorage.setItem(KEYN, k); else localStorage.removeItem(KEYN); } catch (e) {} }
@@ -186,20 +191,23 @@ function aiCall(key, parts) {
 function parseAI(txt) {
   txt = String(txt || '').replace(/^\s*```(?:json)?/i, '').replace(/```\s*$/, '').trim();
   var a; try { a = JSON.parse(txt); } catch (e) { throw new Error('The AI answer could not be understood. Try again.'); }
+  var hd = (a && !Array.isArray(a) && a.bill && typeof a.bill === 'object') ? a.bill : {};
   if (!Array.isArray(a)) { var k = Object.keys(a || {}).filter(function (x) { return Array.isArray(a[x]); })[0]; a = k ? a[k] : []; }
-  var rows = [HEAD.slice()], bad = [];
+  var rows = [HEAD.slice()], bad = [], sum = 0;
   a.forEach(function (o) {
     if (!(o && String(o.name || '').trim())) return;
-    rows.push([o.name, o.qty, o.free, o.batch, o.exp, o.hsn, o.mrp, o.rate, o.disc, o.gst, o.mfr, o.shelf].map(function (v) { return v == null ? '' : v; }));
-    /* self-check: the printed line amount must be about qty x rate (with or without discount / GST) */
-    var q = +o.qty || 0, r = +o.rate || 0, am = +o.amount || 0, d = +o.disc || 0, g = +o.gst || 0;
+    rows.push([o.name, o.qty, o.free, o.batch, o.exp, o.hsn, o.mrp, o.rate, o.disc, o.disc2, o.sch, o.gst, o.mfr, o.shelf].map(function (v) { return v == null ? '' : v; }));
+    /* self-check: the printed line amount must be about qty x rate less discounts / scheme (with or without GST) */
+    var q = +o.qty || 0, r = +o.rate || 0, am = +o.amount || 0, d = +o.disc || 0, d2 = +o.disc2 || 0, sc = +o.sch || 0, g = +o.gst || 0; sum += am;
     if (am > 0 && q > 0 && r > 0) {
-      var cands = [q * r, q * r * (1 - d / 100), q * r * (1 + g / 100), q * r * (1 - d / 100) * (1 + g / 100)];
+      var net = q * r * (1 - d / 100) * (1 - d2 / 100) - sc, cands = [q * r, net, net * (1 + g / 100), q * r * (1 - d / 100), q * r * (1 - d / 100) * (1 + g / 100), q * r * (1 + g / 100)];
       if (!cands.some(function (c) { return Math.abs(c - am) <= Math.max(1.5, am * 0.01); })) bad.push(String(o.name).trim() + ' (qty ' + q + ' x rate ' + r + ' is not ' + am + ')');
     }
   });
   if (rows.length < 2) throw new Error('The AI could not find any medicine lines in this file.');
-  rows.bad = bad;
+  var st = +hd.subTotal || 0, missing = st > 0 && sum > 0 && Math.abs(sum - st) > Math.max(2, st * 0.01);
+  lastBill = { supplier: String(hd.supplier || ''), invNo: String(hd.invNo || ''), date: String(hd.date || ''), billDisc: Math.max(0, +hd.billDisc || 0), subTotal: st, netTotal: +hd.netTotal || 0, lineSum: Math.round(sum * 100) / 100, totalMismatch: missing };
+  rows.bad = bad; rows.bill = lastBill;
   return rows;
 }
 /* reads the bill; if some lines fail the qty x rate = amount check, asks the AI once more with those lines named */
@@ -207,7 +215,7 @@ function aiCheck(key, parts) {
   return aiCall(key, parts).then(function (rows) {
     if (!rows.bad.length) return rows;
     var fix = { text: 'Your previous answer mixed up values between lines. These lines failed the check amount = qty x rate: ' + rows.bad.join('; ') + '. Read the bill again line by line, keep each line\'s name, batch, qty, rate and amount together, and return the full corrected JSON array.' };
-    return aiCall(key, parts.concat([fix])).then(function (r2) { return r2.bad.length <= rows.bad.length ? r2 : rows; }, function () { return rows; });
+    return aiCall(key, parts.concat([fix])).then(function (r2) { var pick = r2.bad.length <= rows.bad.length ? r2 : rows; lastBill = pick.bill; return pick; }, function () { return rows; });
   });
 }
 function aiFile(key, f, kind) {
@@ -308,7 +316,8 @@ PD.billUpload = function (cb) {
         var ld = busy('The AI is reading the bill... about 20 seconds');
         return aiFile(k, src, (kind === 'pdf' && src !== f) ? 'image' : kind).then(function (rows) {
           ld.close();
-          var warn = rows.bad && rows.bad.length ? ' WARNING: ' + rows.bad.length + ' line(s) do not add up (qty x rate is not the printed amount), so names/qty/rate may be mixed between lines: ' + rows.bad.join('; ') + '. Compare with the bill before filling.' : '';
+          var bl = rows.bill || {}, tm = bl.totalMismatch ? ' WARNING: the lines add up to ' + bl.lineSum + ' but the bill shows ' + bl.subTotal + ' before tax, so a line may be missing (check page 2).' : '', bdn = bl.billDisc > 0 ? ' Whole-bill discount of ' + bl.billDisc + ' was found and will be filled in the Bill discount box.' : '';
+          var warn = tm + bdn + (rows.bad && rows.bad.length ? ' WARNING: ' + rows.bad.length + ' line(s) do not add up (qty x rate is not the printed amount), so names/qty/rate may be mixed between lines: ' + rows.bad.join('; ') + '. Compare with the bill before filling.' : '');
           openRows([{ name: 'Bill', rows: rows }], 'Read by the AI reader. It can still misread a number, so check every cell against the bill.' + warn, finish(true));
         }, function (e) {
           ld.close();
