@@ -70,11 +70,11 @@ function lotOfLine(l) {
   var p = (l.serials || []).map(svc.wParse).find(function (x) { return x && x.lot; });
   return p ? p.lot : D().lots.find(function (lt) { return lt.itemId === l.itemId && lt.batchNo === l.batchNo; });
 }
-svc.wMargin = function (from, to) {
+svc.wMargin = function (from, to, shopId) {
   var r = { bills: 0, sales: 0, cost: 0, listCost: 0, returns: 0, retCost: 0, retList: 0 };
-  D().wdisp.forEach(function (x) { if (!x.bill || x.date < from || x.date > to) return; r.bills++; x.lines.forEach(function (l) { r.sales += l.qty * l.rate; r.cost += l.qty * (l.cost || 0); r.listCost += l.qty * (l.listCost != null ? l.listCost : (l.cost || 0)); }); });
+  D().wdisp.forEach(function (x) { if (!x.bill || x.date < from || x.date > to || (shopId && x.shopId !== shopId)) return; r.bills++; x.lines.forEach(function (l) { r.sales += l.qty * l.rate; r.cost += l.qty * (l.cost || 0); r.listCost += l.qty * (l.listCost != null ? l.listCost : (l.cost || 0)); }); });
   D().wret.forEach(function (x) {
-    var d = x.doneOn || x.date; if (x.status !== 'Accepted' || d < from || d > to) return;
+    var d = x.doneOn || x.date; if (x.status !== 'Accepted' || d < from || d > to || (shopId && x.shopId !== shopId)) return;
     x.lines.forEach(function (l) { if (!l.credit) return; r.returns += l.qty * l.rate; if (l.outcome === 'stock') { var lot = lotOfLine(l); r.retCost += l.qty * (lot ? lot.cost : l.rate); r.retList += l.qty * (lot ? (lot.listCost != null ? lot.listCost : lot.cost) : l.rate); } });
   });
   Object.keys(r).forEach(function (k) { r[k] = PD.r2(r[k]); });
