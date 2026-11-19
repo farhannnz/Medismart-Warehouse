@@ -30,19 +30,21 @@ svc.wSupReturn = function (o) {
   var date = o.date || PD.today(); yearOpen(date);
   var sup = svc.supplier(o.supplierId); if (!sup) throw new Error('Choose the supplier');
   var no = svc.docNo('PR-', 'WPRET'), lines = [], taxable = 0, tax = 0;
+  /* a supplier gives back only part (default 75%) of the value of EXPIRED stock */
+  var pct = o.pct != null ? PD.num(o.pct) : (/^expired/i.test(o.reason || '') ? svc.wExpRetPct() : 100); if (!(pct > 0 && pct <= 100)) pct = 100;
   (o.lines || []).forEach(function (l) {
     var q = Math.floor(PD.num(l.qty)); if (!(q > 0)) return;
     var lot = D().lots.find(function (x) { return x.id === l.lotId; }); if (!lot) throw new Error('A batch is missing');
-    var free = []; for (var i = 1; i <= lot.n && free.length < q; i++) if (!lot.gone[i]) free.push(i);
+    var free = []; if (l.idxs && l.idxs.length) { l.idxs.forEach(function (i) { if (!lot.gone[i] && free.length < q) free.push(i); }); } for (var i = 1; i <= lot.n && free.length < q; i++) if (!lot.gone[i] && free.indexOf(i) < 0) free.push(i);
     if (free.length < q) throw new Error('Batch ' + lot.batchNo + ' of ' + svc.itemName(lot.itemId) + ' has only ' + free.length + ' strips');
-    var rate = PD.num(l.rate) > 0 ? PD.num(l.rate) : lot.cost, ta = PD.r2(q * rate), tx = o.gst ? PD.r2(ta * PD.num(lot.tax) / 100) : 0;
+    var rate = PD.num(l.rate) > 0 ? PD.num(l.rate) : lot.cost, ta = PD.r2(q * rate * pct / 100), tx = o.gst ? PD.r2(ta * PD.num(lot.tax) / 100) : 0;
     free.forEach(function (i) { lot.gone[i] = { s: 'sup', ref: no, shop: sup.name, note: o.reason || 'Returned to supplier', d: date }; });
-    taxable += ta; tax += tx; lines.push({ itemId: lot.itemId, lotId: lot.id, batchNo: lot.batchNo, expiry: lot.expiry, qty: q, rate: rate, tax: o.gst ? PD.num(lot.tax) : 0, taxable: ta, taxAmt: tx });
+    taxable += ta; tax += tx; lines.push({ itemId: lot.itemId, lotId: lot.id, batchNo: lot.batchNo, expiry: lot.expiry, qty: q, rate: rate, pct: pct, tax: o.gst ? PD.num(lot.tax) : 0, taxable: ta, taxAmt: tx });
   });
   if (!lines.length) throw new Error('Enter how many strips to return');
   taxable = PD.r2(taxable); tax = PD.r2(tax); var total = PD.r2(taxable + tax);
-  var v = svc.voucher(date, 'Purchase Return', 'Return ' + no + ' to ' + sup.name + (o.reason ? ' (' + o.reason + ')' : ''), [{ acc: svc.partyAcc('sup', sup.id), dr: total }, { acc: 'purret', cr: taxable }, { acc: 'intax', cr: tax }], { kind: 'wpret', id: no, no: no });
-  var rec = { id: PD.uid('pr'), no: no, date: date, supplierId: sup.id, reason: o.reason || '', lines: lines, taxable: taxable, tax: tax, total: total, vch: v.id, by: PD.user ? PD.user.name : '' };
+  var v = svc.voucher(date, 'Purchase Return', 'Return ' + no + ' to ' + sup.name + (o.reason ? ' (' + o.reason + ')' : '') + (pct < 100 ? ' at ' + pct + '%' : ''), [{ acc: svc.partyAcc('sup', sup.id), dr: total }, { acc: 'purret', cr: taxable }, { acc: 'intax', cr: tax }], { kind: 'wpret', id: no, no: no });
+  var rec = { id: PD.uid('pr'), no: no, date: date, supplierId: sup.id, reason: o.reason || '', pct: pct, lines: lines, taxable: taxable, tax: tax, total: total, vch: v.id, by: PD.user ? PD.user.name : '' };
   (D().wpret = D().wpret || []).push(rec); PD.log('Return to supplier ' + no, sup.name + ' ' + PD.n2(total)); PD.save(); return rec;
 };
 /* counted strips per medicine; shortages are written off from the earliest-expiry lots */
@@ -129,7 +131,7 @@ PD.alerts = function () {
 /* ---------- the window ---------- */
 function supReturnHTML(r) {
   var s = svc.supplier(r.supplierId) || {};
-  return '<h2>' + esc(D().shop.name) + '</h2><h3>Debit note / return ' + esc(r.no) + '</h3><div>' + PD.fmtDate(r.date) + ' • To: <b>' + esc(s.name || '') + '</b>' + (r.reason ? ' • Reason: ' + esc(r.reason) : '') + '</div><br><table><thead><tr><th>#</th><th>Medicine</th><th>Batch</th><th>Exp</th><th class="r">Strips</th><th class="r">Rate</th><th class="r">GST%</th><th class="r">Amount</th></tr></thead><tbody>' +
+  return '<h2>' + esc(D().shop.name) + '</h2><h3>Debit note / return ' + esc(r.no) + '</h3><div>' + PD.fmtDate(r.date) + ' • To: <b>' + esc(s.name || '') + '</b>' + (r.reason ? ' • Reason: ' + esc(r.reason) : '') + '</div><br><table><thead><tr><th>#</th><th>Medicine</th><th>Batch</th><th>Exp</th><th class="r">Strips</th><th class="r">Rate</th><th class="r">GST%</th><th class="r">Amount' + (r.pct < 100 ? ' (' + r.pct + '% of value)' : '') + '</th></tr></thead><tbody>' +
     r.lines.map(function (l, i) { return '<tr><td>' + (i + 1) + '</td><td>' + esc(svc.itemName(l.itemId)) + '</td><td>' + esc(l.batchNo) + '</td><td>' + PD.fmtExp(l.expiry) + '</td><td class="r">' + l.qty + '</td><td class="r">' + PD.n2(l.rate) + '</td><td class="r">' + l.tax + '</td><td class="r">' + PD.n2(l.taxable) + '</td></tr>'; }).join('') +
     '</tbody><tfoot><tr><td colspan="7" class="r">Taxable ' + PD.n2(r.taxable) + ' + GST ' + PD.n2(r.tax) + ' = <b>Total</b></td><td class="r b">' + PD.n2(r.total) + '</td></tr></tfoot></table>';
 }

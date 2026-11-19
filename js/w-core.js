@@ -75,7 +75,7 @@ svc.wMargin = function (from, to, shopId) {
   D().wdisp.forEach(function (x) { if (!x.bill || x.date < from || x.date > to || (shopId && x.shopId !== shopId)) return; r.bills++; x.lines.forEach(function (l) { r.sales += l.qty * l.rate; r.cost += l.qty * (l.cost || 0); r.listCost += l.qty * (l.listCost != null ? l.listCost : (l.cost || 0)); }); });
   D().wret.forEach(function (x) {
     var d = x.doneOn || x.date; if (x.status !== 'Accepted' || d < from || d > to || (shopId && x.shopId !== shopId)) return;
-    x.lines.forEach(function (l) { if (!l.credit) return; r.returns += l.qty * l.rate; if (l.outcome === 'stock') { var lot = lotOfLine(l); r.retCost += l.qty * (lot ? lot.cost : l.rate); r.retList += l.qty * (lot ? (lot.listCost != null ? lot.listCost : lot.cost) : l.rate); } });
+    x.lines.forEach(function (l) { if (!l.credit) return; r.returns += l.qty * l.rate * (l.cp != null ? l.cp : 1); if (l.outcome === 'stock') { var lot = lotOfLine(l); r.retCost += l.qty * (lot ? lot.cost : l.rate); r.retList += l.qty * (lot ? (lot.listCost != null ? lot.listCost : lot.cost) : l.rate); } });
   });
   Object.keys(r).forEach(function (k) { r[k] = PD.r2(r[k]); });
   r.gross = PD.r2(r.sales - r.returns - (r.cost - r.retCost));
@@ -149,7 +149,7 @@ svc.wCalcLine = function (l) {
   return { n: q + f, list: PD.r2(list), taxable: PD.r2(taxable), taxAmt: PD.r2(tax), amount: PD.r2(taxable + tax), unit: q + f > 0 ? taxable / (q + f) : 0, listUnit: PD.num(l.cost) };
 };
 /* read a supplier bill sheet (CSV / Excel rows as arrays) into Add Stock lines. Unknown medicines are flagged as new. */
-svc.wBillPats = { name: /^(productname|product|itemname|item|medicine|medicinename|description|particulars|name)$/, batch: /^(batch|batchno|batchnumber|lot)$/, exp: /^(exp|expiry|expirydate|expdate|expiryon)$/, hsn: /^(hsn|hsncode|hsnsac)$/, mrp: /^(mrp|mrpstrip|maxretailprice)$/, rate: /^(rate|ptr|pts|purchaserate|purchaseprice|cost|price|unitrate)$/, qty: /^(qty|quantity|strips|nos|noofstrips)$/, free: /^(free|freeqty|fqty|bonus|scheme)$/, disc: /^(disc|discount|disc%|discount%|dis|dis%|cd|cd%|disc1|disc1%)$/, disc2: /^(disc2|disc2%|discount2|dis2|dis2%)$/, sch: /^(sch|schamt|schemeamt|schemeamount|schdisc|schemediscount|discamt|discountamt|discountamount|disc₹)$/, tax: /^(gst|gst%|tax|tax%|gstrate|igst|igst%)$/, mfr: /^(mfr|mfg|company|manufacturer|mfrname)$/, rack: /^(shelf|rack|shelfno|rackno|shelfname|location)$/ };
+svc.wBillPats = { name: /^(productname|product|itemname|item|medicine|medicinename|description|particulars|name)$/, batch: /^(batch|batchno|batchnumber|lot)$/, exp: /^(exp|expiry|expirydate|expdate|expiryon)$/, hsn: /^(hsn|hsncode|hsnsac)$/, mrp: /^(mrp|mrpstrip|maxretailprice)$/, rate: /^(rate|ptr|pts|purchaserate|purchaseprice|cost|price|unitrate)$/, qty: /^(qty|quantity|strips|nos|noofstrips)$/, free: /^(free|freeqty|fqty|bonus|scheme)$/, disc: /^(disc|discount|disc%|discount%|dis|dis%|cd|cd%|disc1|disc1%)$/, disc2: /^(disc2|disc2%|discount2|dis2|dis2%)$/, sch: /^(sch|schamt|schemeamt|schemeamount|schdisc|schemediscount|discamt|discountamt|discountamount|disc₹)$/, tax: /^(gst|gst%|tax|tax%|gstrate|igst|igst%)$/, mfr: /^(mfr|mfg|company|manufacturer|mfrname)$/, rack: /^(shelf|rack|shelfno|rackno|shelfname|location)$/, itemid: /^itemid$/ };
 /* guess the heading row and which column is which, for the column-mapping dialog */
 svc.wGuessCols = function (rows) {
   var norm = function (s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9%]/g, ''); }, pats = svc.wBillPats, best = { hi: 0, map: {}, n: -1 };
@@ -182,8 +182,8 @@ svc.wParseBill = function (rows) {
   for (i = hi + 1; i < rows.length; i++) {
     var r = rows[i] || [], g = function (f) { return map[f] == null ? '' : r[map[f]]; }, nm = String(g('name') == null ? '' : g('name')).trim().replace(/\s+/g, ' ');
     if (!nm || !(num(g('qty')) > 0)) { if (nm || num(g('qty'))) skipped++; continue; }
-    var it = byName[nm.toLowerCase()], mrp = num(g('mrp')), tax = map.tax != null ? num(g('tax')) : (it ? it.tax : D().settings.defaultTax || 0);
-    var l = { itemId: it ? it.id : '', newName: it ? '' : nm, mfr: String(g('mfr') || '').trim(), hsn: String(g('hsn') || (it && it.hsn) || '').trim(), batchNo: String(g('batch') || '').trim(), expiry: expOf(g('exp')), rack: String(g('rack') || (it && it.rack) || '').trim(), strips: num(g('qty')), free: num(g('free')), cost: num(g('rate')), disc: PD.r2(100 - (100 - num(g('disc'))) * (100 - num(g('disc2'))) / 100), sch: num(g('sch')), tax: tax, mrp: mrp || (it ? it.mrp : 0), sell: '' };
+    var it = (map.itemid != null && svc.item(String(r[map.itemid] || ''))) || byName[nm.toLowerCase()], mrp = num(g('mrp')), tax = map.tax != null ? num(g('tax')) : (it ? it.tax : D().settings.defaultTax || 0);
+    var l = { itemId: it ? it.id : '', newName: it ? '' : nm, mfr: String(g('mfr') || '').trim(), hsn: String(g('hsn') || (it && it.hsn) || '').trim(), batchNo: String(g('batch') || '').trim(), expiry: expOf(g('exp')), rack: String((it && it.rack) || g('rack') || '').trim(), strips: num(g('qty')), free: num(g('free')), cost: num(g('rate')), disc: PD.r2(100 - (100 - num(g('disc'))) * (100 - num(g('disc2'))) / 100), sch: num(g('sch')), tax: tax, mrp: mrp || (it ? it.mrp : 0), sell: '' };
     var last = it && D().lots.filter(function (x) { return x.itemId === it.id; }).pop(), c = svc.wCalcLine(l);
     l.sell = last ? last.sell : PD.r2(Math.max(l.mrp * 0.72, c.unit));
     out.push(l);
@@ -238,6 +238,7 @@ svc.wEnsureItem = function (l) {
   return it;
 };
 /* goods that arrive with <= N days (default 30) to expiry: prepare a return to the supplier, the owner only approves it */
+svc.wExpRetPct = function () { var v = PD.num(D().settings.expRetPct); return v > 0 && v <= 100 ? v : 75; };   /* % of value a supplier credits for EXPIRED stock; shops get the same % back */
 svc.wExpiryDays = function () { return PD.num(D().settings.expRetDays) || 30; };
 svc.wQueueExpiryReturn = function (lots, meta) {
   var lim = svc.wExpiryDays(), bad = lots.filter(function (l) { return l.expiry && PD.daysToExp(l.expiry) <= lim; });
@@ -395,10 +396,11 @@ svc.wImportReturn = function (f) {
     creditTax: PD.r2(lines.reduce(function (a, l) { return a + (l.credit && l.gst ? l.qty * l.rate * l.tax / 100 : 0); }, 0)) };   /* billed stock coming back: reduces what the shop owes once accepted */
   D().wret.push(rec); PD.log('Return imported ' + rec.no, shop.name); PD.save(); return rec;
 };
+function isExpiredLine(l) { return /expir/i.test(l.reason || '') || (l.expiry && PD.daysToExp(l.expiry) <= 0); }
 svc.wAcceptReturn = function (id, outcomes) {
   var r = D().wret.find(function (x) { return x.id === id; }); if (!r) throw new Error('Return not found');
   if (r.status !== 'Pending') throw new Error('This return is already ' + r.status.toLowerCase());
-  var restored = 0, bad = 0;
+  var restored = 0, bad = 0, sentUp = 0, toSup = {};
   r.lines.forEach(function (l, i) {
     var out = (outcomes && outcomes[i]) || l.outcome; l.outcome = out; var left = l.qty;
     var targets = [];
@@ -406,13 +408,42 @@ svc.wAcceptReturn = function (id, outcomes) {
     if (!targets.length && l.itemId) {
       D().lots.filter(function (lt) { return lt.itemId === l.itemId && lt.batchNo === l.batchNo && (!l.expiry || lt.expiry === l.expiry); }).forEach(function (lt) { for (var k = 1; k <= lt.n && targets.length < l.qty; k++) if (lt.gone[k] && lt.gone[k].s === 'out' && lt.gone[k].shop === svc.wShopName(r.shopId)) targets.push({ lot: lt, idx: k }); });
     }
-    targets.slice(0, l.qty).forEach(function (p) { if (out === 'stock') { delete p.lot.gone[p.idx]; restored++; } else { p.lot.gone[p.idx] = { s: 'bad', ref: r.no, shop: svc.wShopName(r.shopId), note: l.reason || 'Returned', d: PD.today() }; bad++; } });
+    var exp = out !== 'stock' && l.credit && isExpiredLine(l);
+    targets.slice(0, l.qty).forEach(function (p) {
+      if (out === 'stock') { delete p.lot.gone[p.idx]; restored++; return; }
+      var sid = exp ? svc.wSupplierId(p.lot.supplier) : '';
+      if (sid) { delete p.lot.gone[p.idx]; var k = sid + '|' + p.lot.id, g = toSup[k] = toSup[k] || { sid: sid, lotId: p.lot.id, idxs: [] }; g.idxs.push(p.idx); sentUp++; }
+      else { p.lot.gone[p.idx] = { s: 'bad', ref: r.no, shop: svc.wShopName(r.shopId), note: l.reason || 'Returned', d: PD.today() }; bad++; }
+    });
+    if (exp) l.cp = svc.wExpRetPct() / 100;   /* expired stock: the supplier takes it back at a part of its value, so the shop gets the same part */
     if (!targets.length) l.unmatched = true;
   });
+  /* expired strips go back to the supplier: debit note in the supplier ledger */
+  var bySup = {}; Object.keys(toSup).forEach(function (k) { var g = toSup[k]; (bySup[g.sid] = bySup[g.sid] || []).push({ lotId: g.lotId, qty: g.idxs.length, idxs: g.idxs }); });
+  Object.keys(bySup).forEach(function (sid) { var pr = svc.wSupReturn({ supplierId: sid, date: PD.today(), reason: 'Expired (shop return ' + r.no + ')', gst: true, pct: svc.wExpRetPct(), lines: bySup[sid] }); (r.supReturns = r.supReturns || []).push(pr.no); });
+  r.credit = PD.r2(r.lines.reduce(function (a, l) { return a + (l.credit ? l.qty * l.rate * (l.cp != null ? l.cp : 1) * (1 + (l.gst ? l.tax / 100 : 0)) : 0); }, 0));
+  r.creditTax = PD.r2(r.lines.reduce(function (a, l) { return a + (l.credit && l.gst ? l.qty * l.rate * (l.cp != null ? l.cp : 1) * l.tax / 100 : 0); }, 0));
   r.status = 'Accepted'; r.doneOn = PD.today(); r.by = PD.user ? PD.user.name : ''; r.restored = restored; r.bad = bad;
-  PD.log('Return accepted ' + r.no, restored + ' back to stock, ' + bad + ' written off'); PD.save(); return r;
+  PD.log('Return accepted ' + r.no, restored + ' back to stock, ' + sentUp + ' expired back to supplier, ' + bad + ' written off'); PD.save(); return r;
 };
 svc.wRejectReturn = function (id, reason) { var r = D().wret.find(function (x) { return x.id === id; }); if (!r) throw new Error('Return not found'); if (r.status !== 'Pending') throw new Error('Already ' + r.status.toLowerCase()); if (!reason || !String(reason).trim()) throw new Error('Give a reason'); r.status = 'Rejected'; r.note2 = reason; PD.log('Return rejected', r.no); PD.save(); };
+
+/* ---------- shop purchases from outside suppliers: the shop sends them, the warehouse authorizes ---------- */
+svc.wImportPurchaseAuth = function (f) {
+  if (!f || f.type !== 'purchase_auth' || !Array.isArray(f.lines)) throw new Error('This is not a purchase from a shop');
+  var shop = ensureShop(f.shop, f.shopId), list = (D().wpauth = D().wpauth || []);
+  if (list.some(function (r) { return r.shopId === shop.id && r.extNo === f.no; })) throw new Error('Purchase ' + f.no + ' from ' + shop.name + ' is already imported');
+  var rec = { id: PD.uid('pa'), no: svc.docNo('SPA-', 'WPAUTH'), extNo: f.no, shopId: shop.id, date: f.date || PD.today(), supplier: f.supplier || '', invNo: f.invNo || '', payMode: f.payMode || 'credit', total: PD.num(f.total),
+    lines: f.lines.map(function (l) { var it = D().items.find(function (i) { return i.name.toLowerCase() === String(l.name || '').toLowerCase(); }); return { name: l.name, itemId: it ? it.id : '', batchNo: l.batchNo || '', expiry: l.expiry || '', qty: PD.num(l.qty), unit: l.unit || '', free: PD.num(l.free), rate: PD.num(l.rate), mrp: PD.num(l.mrp), disc: PD.num(l.disc), tax: PD.num(l.tax), amount: PD.num(l.amount) }; }), status: 'Pending' };
+  list.push(rec); PD.log('Shop purchase received ' + rec.no, shop.name); PD.save(); return rec;
+};
+svc.wDecidePurchaseAuth = function (id, ok, reason) {
+  var r = (D().wpauth || []).find(function (x) { return x.id === id; }); if (!r) throw new Error('Purchase not found');
+  if (r.status !== 'Pending') throw new Error('This purchase is already ' + r.status.toLowerCase());
+  if (!ok && !String(reason || '').trim()) throw new Error('Give a reason');
+  r.status = ok ? 'Authorized' : 'Rejected'; r.reason = ok ? '' : String(reason).trim(); r.doneOn = PD.today(); r.by = PD.user ? PD.user.name : '';
+  PD.log('Shop purchase ' + r.status.toLowerCase() + ' ' + r.no, svc.wShopName(r.shopId)); PD.save(); return r;
+};
 
 /* ---------- shelves ---------- */
 svc.shelfList = function () { var m = {}; D().items.forEach(function (i) { if (i.rack) m[i.rack] = 1; }); return Object.keys(m).sort(); };

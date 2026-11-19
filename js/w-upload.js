@@ -92,12 +92,39 @@ function editImage(srcCanvas) {
   });
 }
 
+
+/* ---------- match a bill's medicine name to OUR item (so the same medicine is not created twice under another spelling) ---------- */
+var ALIASN = 'wh_bill_alias', mIdx = null, mIdxN = -1;
+function compact(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, ''); }
+function toks(s) { return String(s || '').toLowerCase().replace(/(\d)([a-z])/g, '$1 $2').replace(/([a-z])(\d)/g, '$1 $2').split(/[^a-z0-9]+/).filter(function (t) { return t && !/^(tab|tabs|tablet|tablets|cap|caps|capsule|capsules|strip|strips|of|the|and|pack|syp|syrup)$/.test(t); }); }
+function aliases() { try { return JSON.parse(localStorage.getItem(ALIASN) || '{}') || {}; } catch (e) { return {}; } }
+function saveAlias(nm, id) { try { var a = aliases(), k = compact(nm); if (!k) return; a[k] = id; localStorage.setItem(ALIASN, JSON.stringify(a)); } catch (e) {} }
+function itemIdx() {
+  var items = PD.DB.items;
+  if (mIdx && mIdxN === items.length) return mIdx;
+  mIdx = items.filter(function (i) { return i.active !== false; }).map(function (i) { var t = toks(i.name); return { it: i, c: compact(i.name), t: t, set: t.reduce(function (o, x) { o[x] = 1; return o; }, {}) }; }); mIdxN = items.length; return mIdx;
+}
+/* returns an item or null: remembered pick, same name ignoring spaces / symbols, or the closest name when it is clearly the same medicine */
+function matchItem(name) {
+  var c = compact(name); if (!c) return null;
+  var al = aliases(), id = al[c], hit = id && svc.item(id); if (hit) return hit;
+  var ix = itemIdx(), i; for (i = 0; i < ix.length; i++) if (ix[i].c === c) return ix[i].it;
+  var bt = toks(name); if (!bt.length) return null;
+  var best = null, bs = 0;
+  for (i = 0; i < ix.length; i++) {
+    var e = ix[i], inter = 0; bt.forEach(function (t) { if (e.set[t]) inter++; });
+    if (!inter) continue; var sc = inter / (bt.length + e.t.length - inter);
+    if (sc > bs) { bs = sc; best = e.it; }
+  }
+  return bs >= 0.6 ? best : null;
+}
+
 /* ---------- rows dialog: pick rows, say what each column is ---------- */
 var ROLES = [['', '— ignore —'], ['name', 'Medicine name'], ['qty', 'Qty'], ['free', 'Free'], ['batch', 'Batch'], ['exp', 'Expiry'], ['hsn', 'HSN'], ['mrp', 'MRP'], ['rate', 'Rate / strip'], ['disc', 'Disc %'], ['disc2', 'Disc 2 %'], ['sch', 'Scheme / Disc ₹'], ['tax', 'GST %'], ['mfr', 'Manufacturer'], ['rack', 'Shelf']];
 var LABEL = { name: 'Product Name', qty: 'Qty', free: 'Free', batch: 'Batch', exp: 'Exp', hsn: 'HSN', mrp: 'MRP', rate: 'Rate', disc: 'Disc', disc2: 'Disc2', sch: 'Sch', tax: 'GST', mfr: 'Mfr', rack: 'Shelf' };
 function pickRows(sheets, note, done) {
   var pendingBill = lastBill; lastBill = null;
-  var cur = 0, data, width, role, hi, on, MAX = 600, defShelf = '';
+  var cur = 0, data, width, role, hi, on, MAX = 600, defShelf = '', mapId = [], manual = [];
   var m = PD.modal({ title: 'Choose rows and columns', size: 'xl', sticky: true, body: '<div id="rb"></div>', foot: [{ label: 'Cancel' }, { label: 'Fill Purchase', cls: 'p', fn: go }] });
   var rb = PD.$('#rb', m.el);
   function load(i) {
@@ -105,17 +132,20 @@ function pickRows(sheets, note, done) {
     var g = svc.wGuessCols(data); hi = g.n > 0 ? g.hi : -1; role = []; for (var c = 0; c < width; c++) role[c] = '';
     Object.keys(g.map).forEach(function (k) { role[g.map[k]] = k; });
     on = data.map(function (r, ri) { return ri > hi && r.some(function (v) { return String(v == null ? '' : v).trim() !== ''; }); });
-    draw();
+    mapId = []; manual = []; rematch(); draw();
   }
+  function nameOf(ri) { var nc = role.indexOf('name'); return nc < 0 ? '' : String(data[ri][nc] == null ? '' : data[ri][nc]).trim(); }
+  function rematch() { data.forEach(function (r, ri) { if (manual[ri] || ri <= hi) return; var it = on[ri] ? matchItem(nameOf(ri)) : null; mapId[ri] = it ? it.id : ''; }); }
+  function mstat(ri) { var it = mapId[ri] && svc.item(mapId[ri]); return it ? '<span style="color:#2e8b57">✔ our item • shelf <b>' + esc(it.rack || 'NOT SET') + '</b></span>' : (nameOf(ri) ? '<span style="color:#c77d00">NEW item will be created</span>' : ''); }
   function draw() {
     var h = '<p class="hint" style="margin-bottom:6px">' + esc(note || '') + ' <b>1)</b> Tick the rows you want. <b>2)</b> Under each column heading say what it is (Medicine name and Qty are a must). <b>3)</b> Fix any wrong cell by typing in it. Then press <b>Fill Purchase</b>.</p>';
     h += '<div class="row" style="gap:8px;margin-bottom:6px;flex-wrap:wrap">' + (sheets.length > 1 ? '<select class="in sm" id="sh" style="width:auto">' + sheets.map(function (s, i) { return '<option value="' + i + '"' + (i === cur ? ' selected' : '') + '>Sheet: ' + esc(s.name) + '</option>'; }).join('') + '</select>' : '') +
       '<button class="btn sm" id="sa">Tick all</button><button class="btn sm" id="sn">Untick all</button><label class="hint">Heading is row <input class="in sm" id="hr" type="number" min="0" value="' + (hi + 1) + '" style="width:60px"> (0 = no heading)</label><label class="hint">Shelf for rows with none <input class="in sm" id="dsh" value="' + esc(defShelf) + '" placeholder="e.g. A1" style="width:80px"></label><span class="sp"></span><span class="hint" id="cnt"></span></div>';
-    h += '<div class="tw" style="max-height:56vh;overflow:auto"><table class="t"><thead><tr><th></th><th>#</th>';
+    h += '<div class="tw" style="max-height:56vh;overflow:auto"><table class="t"><thead><tr><th></th><th>#</th><th>Our item (search &amp; map)</th>';
     for (var c = 0; c < width; c++) h += '<th><select class="in sm" data-role="' + c + '">' + ROLES.map(function (r) { return '<option value="' + r[0] + '"' + (role[c] === r[0] ? ' selected' : '') + '>' + r[1] + '</option>'; }).join('') + '</select></th>';
     h += '</tr></thead><tbody>';
     data.slice(0, MAX).forEach(function (r, ri) {
-      h += '<tr' + (ri <= hi ? ' style="opacity:.55;background:#f2f2f2"' : '') + '><td><input type="checkbox" data-on="' + ri + '"' + (on[ri] ? ' checked' : '') + '></td><td>' + (ri + 1) + '</td>';
+      h += '<tr' + (ri <= hi ? ' style="opacity:.55;background:#f2f2f2"' : '') + '><td><input type="checkbox" data-on="' + ri + '"' + (on[ri] ? ' checked' : '') + '></td><td>' + (ri + 1) + '</td><td style="min-width:230px">' + (ri > hi ? '<input class="in sm" data-m="' + ri + '" autocomplete="off" placeholder="search our item..." value="' + esc(mapId[ri] && svc.item(mapId[ri]) ? svc.item(mapId[ri]).name : '') + '"><div class="hint" data-ms="' + ri + '">' + mstat(ri) + '</div>' : '') + '</td>';
       for (var c = 0; c < width; c++) h += '<td><input class="in sm" data-c="' + ri + ',' + c + '" value="' + esc(r[c] == null ? '' : String(r[c])) + '" style="min-width:' + (role[c] === 'name' ? 190 : 70) + 'px"></td>';
       h += '</tr>';
     });
@@ -123,8 +153,16 @@ function pickRows(sheets, note, done) {
     rb.innerHTML = h; count();
   }
   function count() { var n = 0; on.forEach(function (v, i) { if (v && i < MAX) n++; }); var e = PD.$('#cnt', rb); if (e) e.textContent = n + ' row(s) ticked'; }
-  PD.on(m.el, 'change', '[data-role]', function (e, t) { role[+t.dataset.role] = t.value; });
-  PD.on(m.el, 'change', '[data-on]', function (e, t) { on[+t.dataset.on] = t.checked; count(); });
+  PD.on(m.el, 'change', '[data-role]', function (e, t) { role[+t.dataset.role] = t.value; if (t.value === 'name') { rematch(); draw(); } });
+  PD.on(m.el, 'change', '[data-on]', function (e, t) { var ri = +t.dataset.on; on[ri] = t.checked; if (t.checked && !manual[ri] && !mapId[ri]) { var it = matchItem(nameOf(ri)); mapId[ri] = it ? it.id : ''; var mi = PD.$('[data-m="' + ri + '"]', m.el); if (mi) mi.value = it ? it.name : ''; var ms = PD.$('[data-ms="' + ri + '"]', m.el); if (ms) ms.innerHTML = mstat(ri); } count(); });
+  /* the "Our item" box: search our own items; picking one fixes the name, shelf and stops a duplicate item */
+  PD.on(m.el, 'focusin', '[data-m]', function (e, t) {
+    if (t._cb) return; var ri = +t.dataset.m;
+    t._cb = PD.combo(t, { source: PD.itemSource({ stock: false }), emptyMsg: 'Not in our items: it will be created as NEW', onPick: function (x) { mapId[ri] = x.id; manual[ri] = true; t.value = x.item.name; var ms = PD.$('[data-ms="' + ri + '"]', m.el); if (ms) ms.innerHTML = mstat(ri); } });
+    t._cb.refresh();
+  });
+  PD.on(m.el, 'input', '[data-m]', function (e, t) { if (t.value.trim() === '') { var ri = +t.dataset.m; mapId[ri] = ''; manual[ri] = true; var ms = PD.$('[data-ms="' + ri + '"]', m.el); if (ms) ms.innerHTML = mstat(ri); } });
+  PD.on(m.el, 'change', '[data-c]', function (e, t) { var p = t.dataset.c.split(','), ri = +p[0]; if (+p[1] === role.indexOf('name') && !manual[ri] && on[ri]) { rematch(); draw(); } });
   PD.on(m.el, 'input', '[data-c]', function (e, t) { var p = t.dataset.c.split(','); data[+p[0]][+p[1]] = t.value; });
   PD.on(m.el, 'change', '#sh', function (e, t) { load(+t.value); });
   PD.on(m.el, 'input', '#dsh', function (e, t) { defShelf = t.value; });
@@ -134,8 +172,8 @@ function pickRows(sheets, note, done) {
   function go() {
     var nameC = role.indexOf('name'), qtyC = role.indexOf('qty');
     if (nameC < 0 || qtyC < 0) { bigErr(new Error('Say which column is the Medicine name and which is Qty (the drop-downs above the columns).')); return false; }
-    var rows = [role.map(function (r) { return r ? LABEL[r] : ''; })];
-    data.forEach(function (r, i) { if (on[i]) { var o = []; for (var c = 0; c < width; c++) o.push(r[c] == null ? '' : r[c]); rows.push(o); } });
+    var rows = [role.map(function (r) { return r ? LABEL[r] : ''; }).concat(['ItemId'])];
+    data.forEach(function (r, i) { if (on[i]) { var o = []; for (var c = 0; c < width; c++) o.push(r[c] == null ? '' : r[c]); o.push(mapId[i] || ''); if (mapId[i]) saveAlias(nameOf(i), mapId[i]); rows.push(o); } });
     if (rows.length < 2) { bigErr(new Error('Tick at least one row.')); return false; }
     try { var res = svc.wParseBill(rows); if (defShelf.trim()) res.lines.forEach(function (l) { if (!l.rack) l.rack = defShelf.trim(); }); res.bill = pendingBill; done(res); } catch (e) { bigErr(e); return false; }
   }

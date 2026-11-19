@@ -538,6 +538,14 @@ function warehouseLink() {
   listen(xref().where('to', '==', 'warehouse').where('type', '==', 'return').where('status', '==', 'new'), function (d) {
     take(d, function (x) { var nr = svc.wImportReturn(Object.assign({}, x.payload, { shopId: x.shopId || x.payload.shopId || '' })); PD.toast && PD.toast('↩ Return ' + nr.extNo + ' from ' + svc.wShopName(nr.shopId), 'ok'); refresh(); return nr.no; });
   });
+  listen(xref().where('to', '==', 'warehouse').where('type', '==', 'purchase_auth').where('status', '==', 'new'), function (d) {
+    take(d, function (x) { var nr = svc.wImportPurchaseAuth(Object.assign({}, x.payload, { shopId: x.shopId || x.payload.shopId || '' })); nr.xid = d.id; PD.save(); PD.toast && PD.toast('Purchase ' + nr.extNo + ' from ' + svc.wShopName(nr.shopId) + ' waits for your authorization', 'ok'); refresh(); return nr.no; });
+  });
+  var dp = svc.wDecidePurchaseAuth; svc.wDecidePurchaseAuth = function (id, ok, reason) {
+    var r = dp.apply(this, arguments);
+    if (r && r.xid) xref().doc(r.xid).update({ authStatus: ok ? 'approved' : 'rejected', reason: reason || '', doneAt: stamp() }).catch(function (e) { console.warn(e); PD.toast && PD.toast('Could not tell the shop yet: ' + (e.message || e), 'err'); });
+    return r;
+  };
   /* a shop cancelled a pending request */
   listen(xref().where('to', '==', 'warehouse').where('type', '==', 'request').where('cancelled', '==', true), function (d) {
     var x = d.data(), r = PD.DB.wreq.find(function (q) { return q.xid === d.id; });
