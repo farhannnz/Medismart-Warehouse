@@ -389,7 +389,7 @@ svc.wImportReturn = function (f) {
   if (D().wret.some(function (r) { return r.shopId === shop.id && r.extNo === f.no; })) throw new Error('Return ' + f.no + ' from ' + shop.name + ' is already imported');
   var lines = f.lines.map(function (l) {
     var it = D().items.find(function (i) { return i.name.toLowerCase() === String(l.name || '').toLowerCase(); });
-    return { name: l.name, itemId: it ? it.id : '', batchNo: l.batchNo, expiry: l.expiry, mrp: PD.num(l.mrp), rate: PD.num(l.rate), qty: PD.num(l.qty), reason: l.reason || '', note: l.note || '', serials: l.serials || [], credit: !!l.credit, gst: !!l.gst, tax: PD.num(l.tax), outcome: /expired|damag/i.test(l.reason || '') ? 'bad' : 'stock' };
+    return { name: l.name, itemId: it ? it.id : '', batchNo: l.batchNo, expiry: l.expiry, mrp: PD.num(l.mrp), rate: PD.num(l.rate), qty: PD.num(l.qty), reason: l.reason || '', note: l.note || '', serials: l.serials || [], credit: !!l.credit, gst: !!l.gst, tax: PD.num(l.tax), outcome: /expir/i.test(l.reason || '') ? 'sup' : /damag/i.test(l.reason || '') ? 'bad' : 'stock' };
   });
   var rec = { id: PD.uid('wt'), no: svc.docNo('RET-', 'WRET'), extNo: f.no, shopId: shop.id, date: f.date || PD.today(), note: f.note || '', lines: lines, status: 'Pending', value: PD.r2(lines.reduce(function (a, l) { return a + l.qty * l.rate; }, 0)),
     credit: PD.r2(lines.reduce(function (a, l) { return a + (l.credit ? l.qty * l.rate * (1 + (l.gst ? l.tax / 100 : 0)) : 0); }, 0)),
@@ -408,14 +408,14 @@ svc.wAcceptReturn = function (id, outcomes) {
     if (!targets.length && l.itemId) {
       D().lots.filter(function (lt) { return lt.itemId === l.itemId && lt.batchNo === l.batchNo && (!l.expiry || lt.expiry === l.expiry); }).forEach(function (lt) { for (var k = 1; k <= lt.n && targets.length < l.qty; k++) if (lt.gone[k] && lt.gone[k].s === 'out' && lt.gone[k].shop === svc.wShopName(r.shopId)) targets.push({ lot: lt, idx: k }); });
     }
-    var exp = out !== 'stock' && l.credit && isExpiredLine(l);
+    var exp = out === 'sup';
     targets.slice(0, l.qty).forEach(function (p) {
       if (out === 'stock') { delete p.lot.gone[p.idx]; restored++; return; }
       var sid = exp ? svc.wSupplierId(p.lot.supplier) : '';
       if (sid) { delete p.lot.gone[p.idx]; var k = sid + '|' + p.lot.id, g = toSup[k] = toSup[k] || { sid: sid, lotId: p.lot.id, idxs: [] }; g.idxs.push(p.idx); sentUp++; }
       else { p.lot.gone[p.idx] = { s: 'bad', ref: r.no, shop: svc.wShopName(r.shopId), note: l.reason || 'Returned', d: PD.today() }; bad++; }
     });
-    if (exp) l.cp = svc.wExpRetPct() / 100;   /* expired stock: the supplier takes it back at a part of its value, so the shop gets the same part */
+    if (exp && l.credit && isExpiredLine(l)) l.cp = svc.wExpRetPct() / 100;   /* expired stock: the supplier takes it back at a part of its value, so the shop gets the same part */
     if (!targets.length) l.unmatched = true;
   });
   /* expired strips go back to the supplier: debit note in the supplier ledger */
