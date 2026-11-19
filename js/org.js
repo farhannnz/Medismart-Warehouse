@@ -30,6 +30,7 @@ PD.peopleView = function (el) {
       { k: 'name', label: 'Name', fmt: function (v) { return '<b>' + esc(v) + '</b>'; } }, { k: 'username', label: 'Username' },
       { k: 'role', label: 'Role', fmt: function (v) { return '<span class="badge ' + (v === 'Admin' ? 'brand' : '') + '">' + v + '</span>'; } },
       { k: 'rights', label: 'Access', raw: function (r) { return r.role === 'Admin' ? 'Everything' : PD.RIGHTS.filter(function (x) { return r.rights && r.rights[x[0]]; }).map(function (x) { return x[1]; }).join(', '); }, fmt: function (v, r) { return '<small class="mut">' + esc(r.role === 'Admin' ? 'Everything' : PD.RIGHTS.filter(function (x) { return r.rights && r.rights[x[0]]; }).map(function (x) { return x[1]; }).join(', ')) + '</small>'; } },
+      { k: 'allowPurchase', label: 'Own purchase', fmt: function (v) { return v ? '<span class="badge ok">allowed</span>' : '<small class="mut">off</small>'; } },
       { k: 'active', label: 'Status', fmt: function (v) { return v === false ? '<span class="badge bad">switched off</span>' : '<span class="badge ok">active</span>'; } }],
       rows: rows, note: 'Each person signs in with their own username + password on any computer or phone. Forgot a password? Switch that login off and make a new one (or they change it themselves from File → Change My Password).' }; },
       drill: admin ? function (r) { edit(r); } : null });
@@ -89,13 +90,13 @@ PD.views.wshops = { render: function (host) {
     };
     function open(s) {
       var mine = users.filter(function (u) { return u.shopId === s.id; });
-      var f = [{ k: 'name', label: 'Shop name', req: true }, { k: 'code', label: 'Code' }, { k: 'address', label: 'Address / area' }, { k: 'active', label: 'Shop switched on (off = nobody of this shop can sign in)', type: 'checkbox', full: true }];
+      var f = [{ k: 'name', label: 'Shop name', req: true }, { k: 'code', label: 'Code' }, { k: 'address', label: 'Address / area' }, { k: 'active', label: 'Shop switched on (off = nobody of this shop can sign in)', type: 'checkbox', full: true }, { k: 'allowPurchase', label: 'Allow this shop its own purchases from outside suppliers (each one still needs your authorization)', type: 'checkbox', full: true }];
       var m = PD.modal({ title: s.name, size: 'lg', body: PD.formHTML(f, s) + '<h4 style="margin:16px 0 8px">Logins of this shop</h4><table class="t"><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody>' +
         (mine.map(function (u) { return '<tr><td>' + esc(u.name) + '</td><td>' + esc(u.username) + '</td><td>' + esc(u.role) + '</td><td>' + (u.active === false ? '<span class="badge bad">off</span>' : '<span class="badge ok">on</span>') + '</td><td class="r"><button class="btn sm" data-tg="' + u.id + '">' + (u.active === false ? 'Switch on' : 'Switch off') + '</button></td></tr>'; }).join('') || '<tr><td colspan="5" class="mut">No logins</td></tr>') +
         '</tbody></table><div class="row" style="margin-top:8px"><button class="btn sm" id="na">' + PD.icon('plus') + 'Add another admin login</button></div><p class="hint">Forgot password? Switch that login off and add a new one.</p>',
         foot: [{ label: 'Close' }, { label: 'Save shop', cls: 'p', keep: true, fn: function (api, btn) {
           try { var v = PD.readForm(api.body, f); busy(btn, true);
-            C.updateShop(s.id, { name: v.name, code: v.code, address: v.address, active: !!v.active }).then(function () { PD.log('Shop changed', v.name); PD.toast('Saved', 'ok'); api.close(); PD.views.wshops.render(host); }, function (e) { busy(btn, false); PD.err(e); });
+            C.updateShop(s.id, { name: v.name, code: v.code, address: v.address, active: !!v.active, allowPurchase: !!v.allowPurchase }).then(function () { PD.log('Shop changed', v.name); PD.toast('Saved', 'ok'); api.close(); PD.views.wshops.render(host); }, function (e) { busy(btn, false); PD.err(e); });
           } catch (e) { PD.err(e); }
           return false;
         } }] });
