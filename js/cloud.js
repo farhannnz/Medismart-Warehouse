@@ -48,55 +48,85 @@ function cachePut() { var snap = { db: PD.DB, rev: C.rev, dirty: C.dirty, at: Da
 
 /* ---------- read / write the DB ---------- */
 function split(s) { var a = []; for (var i = 0; i < s.length; i += CHUNK) a.push(s.slice(i, i + CHUNK)); return a.length ? a : ['']; }
+
+/* Big keys (e.g. a list of 78,000 medicines is ~20 MB as text) are stored gzip-compressed: one Firestore save may carry only ~10 MB.
+   Keys under BIG characters are stored as plain text exactly as before; meta.gz says which keys are compressed. */
+var BIG = 700000;
+function b64(buf) { var u = new Uint8Array(buf), s = '', i; for (i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); }
+function unb64(t) { var b = atob(t), u = new Uint8Array(b.length), i; for (i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; }
+function gz(str) {
+  if (typeof CompressionStream === 'undefined') return Promise.reject(new Error('This browser cannot compress the data. Use a current Chrome or Edge.'));
+  var cs = new CompressionStream('gzip'), w = cs.writable.getWriter(); w.write(new TextEncoder().encode(str)); w.close();
+  return new Response(cs.readable).arrayBuffer().then(b64);
+}
+function ungz(t) {
+  var ds = new DecompressionStream('gzip'), w = ds.writable.getWriter(); w.write(unb64(t)); w.close();
+  return new Response(ds.readable).text();
+}
+C.gz = gz; C.ungz = ungz;
+
 function readCloud() {
   return metaRef.get({ source: 'server' }).then(function (m) {
     if (!m.exists || !m.data().keys) return null;
     var meta = m.data();
     return metaRef.collection('parts').get({ source: 'server' }).then(function (qs) {
       var parts = {}; qs.forEach(function (d) { parts[d.id] = d.data().d; });
-      var out = {}, last = {};
-      Object.keys(meta.keys).forEach(function (k) {
+      var out = {}, last = {}, zk = meta.gz || {};
+      return Promise.all(Object.keys(meta.keys).map(function (k) {
         var s = ''; for (var i = 0; i < meta.keys[k]; i++) s += parts[k + '~' + i] || '';
-        last[k] = s; out[k] = s ? JSON.parse(s) : null;
-      });
-      return { db: out, rev: meta.rev || 0, last: last, keys: meta.keys, pushId: meta.pushId || '' };
+        return (zk[k] && s ? ungz(s) : Promise.resolve(s)).then(function (t) { last[k] = t; out[k] = t ? JSON.parse(t) : null; });
+      })).then(function () { return { db: out, rev: meta.rev || 0, last: last, keys: meta.keys, gz: zk, pushId: meta.pushId || '' }; });
     });
   });
 }
 function push() {
   if (!PD.DB || pushing) return;
   clearTimeout(pushTimer); pushing = true; setState('saving');
-  var changed = {}, keys = {}, any = false;
+  var changed = {}, any = false;
   Object.keys(PD.DB).forEach(function (k) {
     var s = JSON.stringify(PD.DB[k] === undefined ? null : PD.DB[k]);
-    keys[k] = split(s).length;
     if (C.last[k] !== s) { changed[k] = s; any = true; }
   });
   if (!any && C.rev) { pushing = false; C.dirty = false; setState('ok'); return; }
+  var stored = {}, zm = Object.assign({}, C.gzk || {});
+  Promise.all(Object.keys(changed).map(function (k) {
+    var s = changed[k];
+    if (s.length > BIG) return gz(s).then(function (z) { stored[k] = z; zm[k] = 1; });
+    stored[k] = s; delete zm[k]; return null;
+  })).then(function () { send(changed, stored, zm); }, function (e) {
+    pushing = false; C.dirty = true; cachePut(); setState('error', e && e.message); console.warn('cloud compress', e);
+    pushTimer = setTimeout(push, retryMs); retryMs = Math.min(retryMs * 2, 60000);
+  });
+}
+function send(changed, stored, zm) {
+  var keys = {};
+  Object.keys(PD.DB).forEach(function (k) { keys[k] = stored[k] !== undefined ? split(stored[k]).length : (C.cnt && C.cnt[k] != null ? C.cnt[k] : split(JSON.stringify(PD.DB[k] === undefined ? null : PD.DB[k])).length); });
+  Object.keys(zm).forEach(function (k) { if (!keys[k]) delete zm[k]; });
   var base = C.rev, token = ++pushSeq, pushId = SESSION + '-' + token, settled = false;
-  /* no answer in 15 s (internet down): show offline and retry later. If this save still lands later, it is recognised by its pushId. */
+  /* no answer in 60 s (internet down): show offline and retry later. If this save still lands later, it is recognised by its pushId. */
   var guard = setTimeout(function () {
     if (settled || token !== pushSeq) return;
-    pushSeq++; pushing = false; C.dirty = true; C.late[pushId] = { base: base, changed: changed }; cachePut();
+    pushSeq++; pushing = false; C.dirty = true; C.late[pushId] = { base: base, changed: changed, keys: keys, gz: zm }; cachePut();
     setState('offline'); pushTimer = setTimeout(push, retryMs); retryMs = Math.min(retryMs * 2, 30000);
-  }, 15000);
+  }, 60000);
   db.runTransaction(function (tx) {
     return tx.get(metaRef).then(function (m) {
       var cur = m.exists ? (m.data().rev || 0) : 0, old = m.exists ? (m.data().keys || {}) : {};
       if (cur !== base) { var e = new Error('conflict'); e.conflict = true; throw e; }
       var parts = metaRef.collection('parts'), writes = 0;
       Object.keys(changed).forEach(function (k) {
-        var ch = split(changed[k]);
+        var ch = split(stored[k]);
         ch.forEach(function (c, i) { tx.set(parts.doc(k + '~' + i), { d: c }); writes++; });
         for (var j = ch.length; j < (old[k] || 0); j++) tx.delete(parts.doc(k + '~' + j));
       });
       if (writes > 480) throw new Error('Too much changed at once to save in one go');
-      tx.set(metaRef, { rev: base + 1, session: SESSION, pushId: pushId, at: firebase.firestore.FieldValue.serverTimestamp(), keys: keys });
+      tx.set(metaRef, { rev: base + 1, session: SESSION, pushId: pushId, at: firebase.firestore.FieldValue.serverTimestamp(), keys: keys, gz: zm });
     });
   }).then(function () {
     settled = true; clearTimeout(guard);
     if (token !== pushSeq) { lateLanded(pushId); return; }
     Object.keys(changed).forEach(function (k) { C.last[k] = changed[k]; });
+    C.cnt = keys; C.gzk = zm;
     C.rev = base + 1; pushing = false; retryMs = 2000; cachePut(); publishDays();
     if (C.dirtyAgain || !sameAsLast()) { C.dirtyAgain = false; schedule(); } else { C.dirty = false; setState('ok'); }
   }).catch(function (e) {
@@ -116,6 +146,7 @@ function sameAsLast() { return Object.keys(PD.DB).every(function (k) { return C.
 function lateLanded(pushId) {
   var L = C.late[pushId]; delete C.late[pushId]; if (!L || C.rev !== L.base) return;
   Object.keys(L.changed).forEach(function (k) { C.last[k] = L.changed[k]; });
+  if (L.keys) { C.cnt = L.keys; C.gzk = L.gz || {}; }
   C.rev = L.base + 1; if (!pushing) schedule();
 }
 function schedule() { C.dirty = true; if (pushing) { C.dirtyAgain = true; return; } clearTimeout(pushTimer); pushTimer = setTimeout(push, 400); }
@@ -203,7 +234,7 @@ function conflict() {
       PD.DB[k] = mine === undefined ? theirs : theirs === undefined ? mine : merge(base, mine, theirs);
     });
     if (APP === 'shop') try { fixBillNumbers(r.db.sales, C.last.sales ? JSON.parse(C.last.sales) : []); } catch (e) { console.warn('renumber', e); }
-    C.last = r.last; C.rev = r.rev; C.dirty = true; C.merges = (C.merges || 0) + 1;
+    C.last = r.last; C.cnt = r.keys; C.gzk = r.gz || {}; C.rev = r.rev; C.dirty = true; C.merges = (C.merges || 0) + 1;
     console.info('cloud: merged with changes from another computer (rev ' + r.rev + ')');
     if (PD.onRemote) try { PD.onRemote(); } catch (e) { console.error(e); }
     schedule();
@@ -211,7 +242,7 @@ function conflict() {
 }
 function applyRemote(r) {
   Object.keys(r.db).forEach(function (k) { PD.DB[k] = r.db[k]; });
-  C.last = r.last; C.rev = r.rev; C.dirty = false; setState('ok'); cachePut();
+  C.last = r.last; C.cnt = r.keys; C.gzk = r.gz || {}; C.rev = r.rev; C.dirty = false; setState('ok'); cachePut();
   if (PD.onRemote) try { PD.onRemote(); } catch (e) { console.error(e); }
 }
 
@@ -392,11 +423,11 @@ PD.load = function () {
   }).then(function (x) {
     var r = x[0], cache = x[1];
     if (r) {
-      C.last = r.last; C.rev = r.rev;
+      C.last = r.last; C.cnt = r.keys; C.gzk = r.gz || {}; C.rev = r.rev;
       if (cache && cache.dirty && cache.rev === r.rev && cache.db) { C.dirty = true; setTimeout(push, 500); return cache.db; }   /* unsent work from last time */
       return r.db;
     }
-    C.rev = 0; C.last = {}; return null;            /* brand new: the app builds a blank DB and the first save uploads it */
+    C.rev = 0; C.last = {}; C.cnt = {}; C.gzk = {}; return null;            /* brand new: the app builds a blank DB and the first save uploads it */
   }).catch(function (e) {
     console.warn('cloud load', e);
     if (e && e.code === 'permission-denied') return blocked('No access', 'This login is not allowed to open the data. Check the Firestore rules (see SETUP.md).');
@@ -554,7 +585,7 @@ function warehouseLink() {
   /* publish the medicine list whenever items change */
   var lastCat = '';
   C.publishCatalog = function () {
-    var f = clean(svc.wItemsFile()), s = JSON.stringify(f.items); if (s === lastCat) return; lastCat = s;
+    var f = clean(svc.wItemsFile()), s = JSON.stringify(f.items); if (s === lastCat) return; lastCat = s; if (f.items.length > 3000) { console.info('catalog: list too big for one document (' + f.items.length + ' items); not published'); return; }
     try { xref().doc('catalog').set({ type: 'items', from: 'warehouse', to: 'shop', rev: Date.now(), payload: f, at: stamp() }).catch(function (e) { console.warn('catalog', e); lastCat = ''; }); }
     catch (e) { console.warn('catalog', e); lastCat = ''; }
   };
