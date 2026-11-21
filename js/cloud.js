@@ -558,6 +558,11 @@ function warehouseLink() {
     C.send('dispatch', 'shop', d.no, svc.wDispatchFile(d), { shop: svc.wShopName(d.shopId), shopId: ws.regId || '' });
     return d;
   };
+  var dd = svc.wDirectDispatch; svc.wDirectDispatch = function (shopId) {
+    var d = dd.apply(this, arguments), ws = svc.wShop(d.shopId) || {};
+    C.send('dispatch', 'shop', d.no, svc.wDispatchFile(d), { shop: svc.wShopName(d.shopId), shopId: ws.regId || '' });
+    return d;
+  };
   var rj = svc.wRejectRequest; svc.wRejectRequest = function (id, reason) {
     var r = PD.DB.wreq.find(function (x) { return x.id === id; }); rj.apply(this, arguments);
     if (r && r.xid) xref().doc(r.xid).update({ status: 'rejected', reason: reason, doneAt: stamp() }).catch(function (e) { console.warn(e); });

@@ -531,6 +531,32 @@ var oDisp = svc.wDispatch;
 /* GST on bills to shops: only when the option is on (Settings). Each line is charged the medicine's GST on top of the shop price. */
 function applyGst(d) { var tx = 0; d.lines.forEach(function (l) { l.taxAmt = PD.r2(l.qty * l.rate * PD.num(l.tax) / 100); tx += l.taxAmt; }); d.tax = PD.r2(tx); d.total = PD.r2(d.taxable + d.tax); d.gst = true; }
 svc.wDispatch = function (reqId, note) { openYear(); var d = oDisp(reqId, note); if (D().settings.gstOnBills && d.bill) applyGst(d); postBill(d); PD.save(); return d; };
+/* Direct supply to one of our own shops, no request needed: lines = [{ lotId, serials, rate, disc }].
+   Makes a normal dispatch + bill (same as a request dispatch), so the shop gets it in Receive Stock and its account is billed. */
+svc.wDirectDispatch = function (shopId, lines, o) {
+  o = o || {}; var date = o.date || PD.today(); openYear(date);
+  var shop = svc.wShop(shopId); if (!shop) throw new Error('Choose the shop');
+  if (!(lines || []).length) throw new Error('Add at least one medicine');
+  var no = svc.docNo('WD-', 'WDISP'), seen = {}, out = [], all = [], taxable = 0;
+  lines.forEach(function (l) {
+    var lot = D().lots.find(function (x) { return x.id === l.lotId; }), it = lot && svc.item(lot.itemId); if (!lot || !it) throw new Error('A batch is missing');
+    if (!(l.serials || []).length) return;
+    if (lot.block) throw new Error(it.name + ' batch ' + lot.batchNo + ' is on ' + lot.block + ' and cannot be sent');
+    l.serials.forEach(function (sr) { var p = svc.wParse(sr); if (!p || p.lot !== lot || p.bad) throw new Error('Wrong strip ' + sr); if (lot.gone[p.idx]) throw new Error(sr + ' is no longer in stock'); if (seen[sr]) throw new Error(sr + ' is on the bill twice'); seen[sr] = 1; });
+    var disc = PD.num(l.disc); if (disc < 0 || disc > 100) throw new Error('Discount must be 0 to 100');
+    var base = l.rate === '' || l.rate == null ? (PD.num(lot.sell) > 0 ? PD.num(lot.sell) : PD.num(lot.cost)) : PD.num(l.rate); if (!(base >= 0)) throw new Error('Enter the rate for ' + it.name);
+    var rate = Math.round(base * (1 - disc / 100) * 10000) / 10000, qty = l.serials.length;
+    taxable += qty * rate;
+    out.push({ itemId: it.id, lotId: lot.id, batchNo: lot.batchNo, expiry: lot.expiry, mrp: lot.mrp, rate: rate, cost: lot.cost, listCost: lot.listCost != null ? lot.listCost : lot.cost, qty: qty, tax: it.tax || 0, serials: l.serials.slice() });
+    l.serials.forEach(function (sr) { all.push(sr); lot.gone[svc.wParse(sr).idx] = { s: 'out', ref: no, shop: shop.name, d: date }; });
+  });
+  if (!out.length) throw new Error('Add at least one strip');
+  taxable = PD.r2(taxable);
+  var d = { id: PD.uid('wd'), no: no, reqId: '', reqNo: '', extNo: '', shopId: shopId, date: date, by: PD.user ? PD.user.name : '', note: o.note || '', lines: out, serials: all, taxable: taxable, tax: 0, total: taxable, status: 'Sent', bill: true, direct: true };
+  if (D().settings.gstOnBills) applyGst(d);
+  D().wdisp.push(d); postBill(d);
+  PD.log('Direct dispatch ' + no, shop.name + ' ' + PD.n2(d.total)); PD.save(); return d;
+};
 var oAcc = svc.wAcceptReturn;
 svc.wAcceptReturn = function (id, outcomes) { openYear(); var r = oAcc(id, outcomes); postReturn(r); PD.save(); return r; };
 var oPay = svc.wReceivePay;

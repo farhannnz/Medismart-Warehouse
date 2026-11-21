@@ -108,75 +108,228 @@ PD.views.wsale = { render: function (host, arg) {
       }, drill: function (r, run) { var s = sales().find(function (x) { return x.id === r.id; }); if (s) showSale(s, run); } });
   }
 
+
+  /* ---------- new sale bill: same screen as the shop's Sales Bill. Pick a medicine and the batch that expires FIRST is chosen by itself
+     (and the next-nearest batch is used when the first one runs out). Party can be cash, any party, or one of OUR OWN SHOPS (goes straight to that
+     shop's Receive Stock and its account, no request needed). ---------- */
+  var HAY = null;
+  function hayList() {
+    var items = D().items;
+    if (HAY && HAY.db === PD.DB && HAY.n === items.length) return HAY.list;
+    var list = []; items.forEach(function (it) { if (it.active === false) return; list.push({ it: it, hay: (it.name + ' ' + (it.generic || '')).toLowerCase() }); });
+    HAY = { db: PD.DB, n: items.length, list: list }; return list;
+  }
+  function dispAsSale(d) {
+    var g = !!d.gst;
+    return { no: d.no, date: d.date, partyId: d.shopId, gst: g, pay: 'credit', received: 0, note: d.note, taxable: d.taxable, tax: d.tax, total: d.total,
+      lines: d.lines.map(function (l) { return { itemId: l.itemId, hsn: (svc.item(l.itemId) || {}).hsn || '', batchNo: l.batchNo, expiry: l.expiry, mrp: l.mrp, rate: l.rate, disc: 0, tax: g ? l.tax : 0, qty: l.qty, net: PD.r2(l.qty * l.rate) }; }) };
+  }
+  function expc(e) { if (!e) return ''; var dd = PD.daysToExp(e); return dd < 0 ? 'expd' : dd <= (D().settings.expiryDays || 90) ? 'expw' : ''; }
+
   function newBill(el) {
     ensureCash();
-    var cart = [], meta = { partyId: 'cashsale', date: PD.today(), gst: true, pay: 'cash', received: '', note: '' }, msg = '', hits = [];
+    var cart = [], sel = -1, results = [], idx = 0, msg = '', fyA = new Date().getMonth() >= 3 ? new Date().getFullYear() : new Date().getFullYear() - 1;
+    var meta = { party: 'cashsale', date: PD.today(), gst: true, pay: 'cash', received: '', note: '' };
+    function isShop() { return /^shop:/.test(meta.party); }
+    function shopId() { return meta.party.slice(5); }
+    function gstOn() { return isShop() ? !!D().settings.gstOnBills : !!meta.gst; }
     function taken() { var t = {}; cart.forEach(function (l) { l.serials.forEach(function (s) { t[s] = 1; }); }); return t; }
     function lotOf(l) { return D().lots.find(function (x) { return x.id === l.lotId; }); }
-    function addLot(lot, serials) { var l = cart.find(function (x) { return x.lotId === lot.id; }); if (!l) { l = { lotId: lot.id, serials: [], rate: PD.num(lot.sell) > 0 ? lot.sell : lot.cost, disc: 0 }; cart.push(l); } l.serials = l.serials.concat(serials); }
+    function sellable(lot) { return !lot.block && (!lot.expiry || PD.daysToExp(lot.expiry) >= 0); }
+    function used(lotId, skip) { var n = 0; cart.forEach(function (l, i) { if (l.lotId === lotId && i !== skip) n += l.serials.length; }); return n; }
+    function free(lot, skip) { return svc.wLeft(lot) - used(lot.id, skip); }
+    function fefo(itemId) { return svc.wLotsOf(itemId).filter(sellable); }   /* earliest expiry first, expired / held batches left out */
+    function defRate(lot) { return PD.num(lot.sell) > 0 ? lot.sell : lot.cost; }
+    function addToLot(lot, n) {
+      if (n <= 0) return 0; var s = freeSerials(lot, n, taken()); if (!s.length) return 0;
+      var row = cart.find(function (x) { return x.lotId === lot.id; });
+      if (!row) { row = { lotId: lot.id, serials: [], rate: defRate(lot), disc: 0 }; var at = -1; cart.forEach(function (x, i) { if (lotOf(x).itemId === lot.itemId) at = i; }); if (at >= 0) cart.splice(at + 1, 0, row); else cart.push(row); }
+      row.serials = row.serials.concat(s); return s.length;
+    }
+    function addItem(itemId, n) { var left = n; fefo(itemId).forEach(function (lot) { if (left > 0) left -= addToLot(lot, Math.min(left, free(lot))); }); return n - left; }
+    function setQty(i, n) {
+      var row = cart[i]; n = Math.floor(PD.num(n)); if (!row) return;
+      if (n <= 0) { cart.splice(i, 1); sel = Math.min(sel, cart.length - 1); return; }
+      var cur = row.serials.length, lot = lotOf(row), need;
+      if (n < cur) { row.serials = row.serials.slice(0, n); return; }
+      need = n - cur; if (sellable(lot)) need -= addToLot(lot, Math.min(need, free(lot)));
+      if (need > 0) need -= addItem(lot.itemId, need);
+      if (need > 0) PD.toast('Only ' + (n - need) + ' strips of ' + svc.itemName(lot.itemId) + ' are in stock: quantity set to ' + (n - need), 'err');
+    }
+    function changeBatch(i, lotId) {
+      var row = cart[i], nl = D().lots.find(function (x) { return x.id === lotId; }); if (!row || !nl || nl.id === row.lotId) return;
+      var cnt = row.serials.length, take = Math.min(cnt, free(nl)); if (take <= 0) { PD.toast('That batch has no free strips', 'err'); return; }
+      var other = cart.find(function (x) { return x.lotId === nl.id; }), it = nl.itemId;
+      cart.splice(i, 1); addToLot(nl, take);
+      if (!other) { var nr = cart.find(function (x) { return x.lotId === nl.id; }); if (nr) { nr.rate = defRate(nl); } }
+      if (take < cnt) { var back = addItem(it, cnt - take); if (back < cnt - take) PD.toast('Only ' + (take + back) + ' strips available', 'err'); }
+    }
     function calc() {
-      var tx = 0, tt = 0; cart.forEach(function (l) { var it = svc.item(lotOf(l).itemId), net = l.serials.length * PD.num(l.rate) * (1 - PD.num(l.disc) / 100); tt += net; if (meta.gst) tx += net * PD.num(it.tax) / 100; });
-      return { taxable: PD.r2(tt), tax: PD.r2(tx), total: PD.r2(tt + tx) };
+      var tx = 0, tt = 0, g = gstOn(), q = 0, gross = 0;
+      cart.forEach(function (l) { var it = svc.item(lotOf(l).itemId), n = l.serials.length, base = n * PD.num(l.rate), net = base * (1 - PD.num(l.disc) / 100); q += n; gross += base; tt += net; if (g) tx += net * PD.num(it.tax) / 100; });
+      return { gross: PD.r2(gross), taxable: PD.r2(tt), tax: PD.r2(tx), total: PD.r2(tt + tx), qty: q };
     }
-    function draw() {
-      var parties = D().customers.filter(function (c) { return !c.isShop && c.active !== false && c.id !== 'cashsale'; }).sort(function (a, b) { return a.name.localeCompare(b.name); }), c = calc(), rec = meta.pay === 'credit' ? 0 : (meta.received === '' ? c.total : PD.num(meta.received));
-      el.innerHTML = '<div class="card"><div class="bd"><div class="row" style="gap:12px;flex-wrap:wrap;align-items:flex-end"><div class="fld" style="min-width:240px"><label>Party</label><select class="in" id="sp"><option value="cashsale">Cash sale (walk-in)</option>' + parties.map(function (p) { return '<option value="' + p.id + '"' + (p.id === meta.partyId ? ' selected' : '') + '>' + esc(p.name) + '</option>'; }).join('') + '</select></div><button class="btn sm" id="np">+ New party</button><div class="fld"><label>Date</label><input type="date" class="in" id="sd" value="' + meta.date + '"></div><label class="chk" style="margin-bottom:8px"><input type="checkbox" id="sg"' + (meta.gst ? ' checked' : '') + '> Charge GST</label></div>' +
-        '<div class="scanbox" style="margin-top:10px"><label>Scan strip:</label><input class="in" id="ssc" autocomplete="off" placeholder="scan a strip, or search a medicine below" style="font-size:16px"><span class="fb">' + msg + '</span></div>' +
-        '<div class="row" style="margin-top:6px"><input class="in" id="smq" placeholder="search medicine to add by batch..." style="flex:1" autocomplete="off"></div><div id="shits"></div></div></div>' +
-        '<div class="card" style="margin-top:12px"><div class="tw"><table class="t"><thead><tr><th>Medicine</th><th>Batch</th><th>Exp</th><th class="r">Strips</th><th class="r">MRP</th><th class="r">Rate</th><th class="r">Disc %</th><th class="r">GST %</th><th class="r">Amount</th><th></th></tr></thead><tbody>' +
-        (cart.length ? cart.map(function (l, i) { var lot = lotOf(l), it = svc.item(lot.itemId), net = l.serials.length * PD.num(l.rate) * (1 - PD.num(l.disc) / 100); return '<tr><td><b>' + esc(it.name) + '</b></td><td>' + esc(lot.batchNo) + '</td><td>' + PD.fmtExp(lot.expiry) + '</td><td class="r">' + l.serials.length + '</td><td class="r">' + PD.n2(lot.mrp) + '</td><td class="r"><input type="number" step="any" class="in sm" style="width:90px;text-align:right" data-r="' + i + '" value="' + l.rate + '"></td><td class="r"><input type="number" step="any" class="in sm" style="width:64px;text-align:right" data-d="' + i + '" value="' + (l.disc || '') + '"></td><td class="r">' + (meta.gst ? PD.num(it.tax) : 0) + '</td><td class="r">' + PD.n2(net) + '</td><td class="r"><button class="btn sm" data-x="' + i + '">remove</button></td></tr>'; }).join('') : '<tr><td colspan="10" class="mut" style="padding:16px">Scan strips or search a medicine to start the bill.</td></tr>') + '</tbody></table></div>' +
-        '<div class="bd row" style="gap:14px;flex-wrap:wrap;align-items:flex-end"><div class="fld"><label>Payment</label><select class="in" id="spm"><option value="cash"' + (meta.pay === 'cash' ? ' selected' : '') + '>Cash</option><option value="bank"' + (meta.pay === 'bank' ? ' selected' : '') + '>UPI / bank</option><option value="credit"' + (meta.pay === 'credit' ? ' selected' : '') + '>On credit (udhaar)</option></select></div><div class="fld"><label>Received now</label><input type="number" step="any" class="in" id="srv" value="' + (meta.pay === 'credit' ? 0 : (meta.received === '' ? c.total : meta.received)) + '"' + (meta.pay === 'credit' ? ' disabled' : '') + '></div><div class="fld" style="flex:1;min-width:160px"><label>Note</label><input class="in" id="snt" value="' + esc(meta.note) + '"></div>' +
-        '<div style="text-align:right"><div class="mut">Taxable ' + PD.n2(c.taxable) + ' + GST ' + PD.n2(c.tax) + '</div><div style="font-size:22px;font-weight:800">' + PD.money(c.total) + '</div><div class="mut">Due on this bill ' + PD.n2(PD.r2(c.total - rec)) + '</div></div><button class="btn p" id="ssv"' + (cart.length ? '' : ' disabled') + '>Save &amp; print bill</button></div></div>';
-      if (meta.partyId === 'cashsale' && meta.pay === 'credit') $('#spm', el).title = 'Walk-in buyers should pay now';
-      var scn = $('#ssc', el); scn.focus(); wire(scn); hitsDraw();
+    function recvAmt(c) { return meta.pay === 'credit' ? 0 : (meta.received === '' ? c.total : PD.num(meta.received)); }
+
+    var shopN = (D().shop && D().shop.name) || 'Warehouse';
+    function build() {
+      var parties = D().customers.filter(function (c) { return !c.isShop && c.active !== false && c.id !== 'cashsale'; }).sort(function (a, b) { return a.name.localeCompare(b.name); });
+      var shops = D().shops.filter(function (s) { return s.active !== false; }).sort(function (a, b) { return a.name.localeCompare(b.name); });
+      el.innerHTML = '<div class="msw ssw">' +
+        '<div class="sband"><b class="sb1">&#10010; Medismart Warehouse</b><span class="sb2">' + esc(shopN) + '</span><span class="sb3">01/04/' + fyA + ' &nbsp;TO&nbsp; 31/03/' + (fyA + 1) + '</span><span class="sb4">Login &nbsp; ' + esc(PD.user ? PD.user.name : '') + '</span></div>' +
+        '<div class="stitle"><span>SALE</span><span>WS</span><span id="sgt">Gst</span></div>' +
+        '<div class="shead"><label>VrNo:</label><input class="in" id="bno" readonly style="width:110px"><label>Date</label><input type="date" class="in" id="sd" value="' + meta.date + '" style="width:140px"><label>Party</label>' +
+          '<select class="in" id="sp" style="min-width:240px"><option value="cashsale">Cash sale (walk-in)</option>' +
+          (shops.length ? '<optgroup label="Our shops (goes to the shop\'s Receive Stock, no request needed)">' + shops.map(function (s) { return '<option value="shop:' + s.id + '">' + esc(s.name) + ' (shop)</option>'; }).join('') + '</optgroup>' : '') +
+          (parties.length ? '<optgroup label="Other parties">' + parties.map(function (p) { return '<option value="' + p.id + '">' + esc(p.name) + '</option>'; }).join('') + '</optgroup>' : '') + '</select>' +
+          '<button class="mb" id="np">&#10133; New party</button><label class="chk" style="color:#fff"><input type="checkbox" id="sg"> Charge GST</label><span class="sp"></span></div>' +
+        '<div class="skeys">F3 Item Search, Enter Add item (nearest-expiry batch is picked by itself) &nbsp; Del Item Ctrl+D &nbsp; Scan a strip in the box on the right &nbsp; Ctrl+Enter Save &nbsp; F10 Print save</div>' +
+        '<div class="msgrid"><table class="t" id="cart"></table></div>' +
+        '<div class="msentry"><div class="ehead"><span style="flex:1">Item Name (type name / generic) &mdash; nearest expiry batch comes automatically</span><span style="width:260px">Scan strip</span></div>' +
+        '<div class="erow"><div style="flex:1;position:relative"><input class="in" id="q" placeholder="*  (type name / generic, F3)" autocomplete="off" style="text-align:left"><div class="sres" id="res"></div></div><input class="in" id="ssc" autocomplete="off" placeholder="scan a strip barcode" style="width:260px;text-align:left"></div><div class="hint" id="smsg" style="min-height:16px"></div></div>' +
+        '<div class="sbot">' +
+          '<div class="srec"><div class="skeys">Recent bills, click one to open it</div><input class="in sm" id="bsq" placeholder="search bill no / party" autocomplete="off"><div class="srecw"><table class="t" id="rec"></table></div></div>' +
+          '<div class="smid">' +
+            '<div class="sf"><label>Pay</label><select class="in" id="spm"><option value="cash">Cash</option><option value="bank">UPI / bank</option><option value="credit">On credit (udhaar)</option></select></div>' +
+            '<div class="sf"><label>PaidAmt</label><input class="in" id="srv" type="number" step="any" style="max-width:130px"></div>' +
+            '<div class="sf"><label>Balance</label><input class="in" id="bal" readonly style="max-width:130px"></div>' +
+            '<div class="sf"><label>Narration</label><input class="in" id="snt"></div>' +
+            '<div class="hint" id="pnote"></div>' +
+          '</div>' +
+          '<div class="sright"><div id="tot"></div><div class="snet"><label>Net Amt</label><b id="netv">0</b></div><div class="sti"><label>Total Items</label><b id="ni">0</b><label style="margin-left:8px">Qty</label><b id="nq">0</b></div><div id="thint"></div></div>' +
+        '</div>' +
+        '<div class="sbtns"><button class="sbtn" id="ssv"><i>&#128190;</i>Save</button><button class="sbtn" id="ssp"><i>&#128438;</i>Print save</button><button class="sbtn" id="sdel"><i>&#128465;</i>Delete row</button><button class="sbtn" id="sclr"><i>&#10006;</i>Clear</button></div></div>';
+      $('#sp', el).value = meta.party; $('#sg', el).checked = meta.gst; $('#snt', el).value = meta.note;
+      drawCart(); drawRec(); $('#q', el).focus();
     }
-    function hitsDraw() {
-      var h = $('#shits', el); if (!h) return;
-      h.innerHTML = hits.length ? '<div class="msgrid" style="max-height:30vh;margin-top:6px;background:#fff"><table class="t"><tbody>' + hits.map(function (it) { return '<tr class="click" data-it="' + it.id + '"><td><b>' + esc(it.name) + '</b> <small class="mut">' + esc(it.generic || '') + '</small></td><td>' + esc(it.rack || '') + '</td><td class="r">stock ' + svc.wStock(it.id) + '</td><td class="r">MRP ' + PD.n2(it.mrp) + '</td></tr>'; }).join('') + '</tbody></table></div>' : '';
+    function drawCart() {
+      var t = $('#cart', el); if (!t) return;
+      t.innerHTML = '<thead><tr><th style="width:40px">SN</th><th>ItemName</th><th style="width:56px">Pack</th><th style="width:54px">Shelf</th><th style="width:130px">BatchNo</th><th style="width:76px">Expiry</th><th class="r" style="width:70px">Mrp</th><th class="r" style="width:64px">Qty</th><th class="r" style="width:84px">Rate</th><th class="r" style="width:60px">Disc%</th><th class="r" style="width:50px">GST%</th><th class="r" style="width:90px">Amount</th></tr></thead><tbody>' +
+        (cart.length ? cart.map(function (l, i) {
+          var lot = lotOf(l), it = svc.item(lot.itemId), net = l.serials.length * PD.num(l.rate) * (1 - PD.num(l.disc) / 100);
+          var opts = fefo(lot.itemId); if (!opts.some(function (x) { return x.id === lot.id; })) opts = [lot].concat(opts);
+          return '<tr class="cartrow ' + (i === sel ? 'sel' : '') + '" data-r="' + i + '"><td>' + (i + 1) + '</td><td>' + esc(it.name) + ' ' + PD.schedBadge(it.schedule) + '</td><td>' + esc(it.pack || '') + '</td><td>' + esc(it.rack || '') + '</td>' +
+            '<td><select class="in sm" data-b="' + i + '">' + opts.map(function (b) { return '<option value="' + b.id + '"' + (b.id === lot.id ? ' selected' : '') + '>' + esc(b.batchNo) + ' (' + (svc.wLeft(b) - used(b.id, i)) + ')</option>'; }).join('') + '</select></td>' +
+            '<td class="' + expc(lot.expiry) + '">' + PD.fmtExp(lot.expiry) + '</td><td class="r">' + PD.n2(lot.mrp) + '</td>' +
+            '<td class="r"><input class="in sm qn" data-q="' + i + '" type="number" min="0" step="1" value="' + l.serials.length + '"></td>' +
+            '<td class="r"><input class="in sm" data-rt="' + i + '" type="number" step="any" value="' + l.rate + '"></td>' +
+            '<td class="r"><input class="in sm" data-d="' + i + '" type="number" min="0" max="100" step="any" value="' + (l.disc || '') + '"></td>' +
+            '<td class="r">' + (gstOn() ? PD.num(it.tax) : 0) + '</td><td class="r"><b>' + PD.n2(net) + '</b></td></tr>';
+        }).join('') : '<tr><td colspan="12" class="mut" style="padding:16px">Search a medicine (F3) or scan a strip to start the bill.</td></tr>') + '</tbody>';
+      totals();
     }
-    function wire(scn) {
-      scn.addEventListener('keydown', function (e) {
-        if (e.key !== 'Enter') return; e.preventDefault(); var v = scn.value; scn.value = ''; if (!v.trim()) return;
-        var p = svc.wParse(v);
-        if (!p) msg = '<span style="color:#c62828">✖ Not a Medismart strip code</span>';
-        else if (!p.lot || p.bad) msg = '<span style="color:#c62828">✖ Unknown strip ' + esc(p.serial) + '</span>';
-        else if (p.lot.gone[p.idx]) msg = '<span style="color:#c62828">✖ ' + esc(p.serial) + ' is not in stock</span>';
-        else if (p.lot.block) msg = '<span style="color:#c62828">✖ Batch is on ' + esc(p.lot.block) + ': cannot be sold</span>';
-        else if (taken()[p.serial]) msg = '<span style="color:#c62828">✖ ' + esc(p.serial) + ' is already on the bill</span>';
-        else { addLot(p.lot, [p.serial]); msg = '<span style="color:#2e8b57">✔ ' + esc(svc.itemName(p.lot.itemId)) + ' • ' + esc(p.serial) + '</span>'; }
-        draw();
-      });
-      $('#smq', el).addEventListener('input', function () {
-        var words = this.value.trim().toLowerCase().split(/\s+/).filter(Boolean); hits = [];
-        if (words.length) for (var i = 0; i < D().items.length && hits.length < 30; i++) { var it = D().items[i]; if (it.active === false) continue; var hay = (it.name + ' ' + (it.generic || '')).toLowerCase(); if (words.every(function (w) { return hay.indexOf(w) >= 0; }) && svc.wStock(it.id) > 0) hits.push(it); }
-        hitsDraw();
-      });
+    function totals() {
+      var c = calc(), rec = recvAmt(c), sh = isShop();
+      $('#sgt', el).textContent = gstOn() ? 'Gst' : 'No Gst'; $('#sg', el).checked = gstOn(); $('#sg', el).disabled = sh;
+      var pm = $('#spm', el); pm.value = meta.pay; pm.disabled = sh;
+      var rc = $('#srv', el); rc.disabled = meta.pay === 'credit'; if (document.activeElement !== rc) rc.value = meta.pay === 'credit' ? 0 : (meta.received === '' ? c.total : meta.received);
+      $('#bal', el).value = PD.n2(Math.max(0, PD.r2(c.total - rec)));
+      $('#tot', el).innerHTML = '<div class="sf gr"><label>Gross</label><input class="in" readonly value="' + PD.n2(c.gross) + '"></div><div class="sf fd"><label>Discount</label><input class="in" readonly value="' + PD.n2(PD.r2(c.gross - c.taxable)) + '"></div>';
+      $('#netv', el).textContent = PD.n2(c.total); $('#ni', el).textContent = cart.length; $('#nq', el).textContent = c.qty;
+      $('#thint', el).innerHTML = '<div class="hint">Taxable ' + PD.n2(c.taxable) + ' + GST ' + PD.n2(c.tax) + '</div>';
+      $('#pnote', el).innerHTML = sh ? 'Our own shop: the bill goes on its account (see Shop Accounts) and the stock appears in the shop\'s <b>Receive Stock</b> at once. ' + (D().settings.gstOnBills ? 'GST follows Settings.' : 'No GST on shop bills (Settings).') : (meta.party === 'cashsale' ? 'Walk-in buyers must pay in full.' : '');
+      $('#bno', el).value = 'WS-' + String(((D().counters && (D().counters.WSALE || 0)) || 0) + 1);
+      var sv = $('#ssv', el); if (sv) { sv.disabled = !cart.length; $('#ssp', el).disabled = !cart.length; }
     }
-    /* the received box follows the bill total until the user types an amount in it */
-    function read(typedReceived) { meta.partyId = $('#sp', el).value; meta.date = $('#sd', el).value || PD.today(); meta.gst = $('#sg', el).checked; meta.pay = $('#spm', el).value; meta.note = $('#snt', el).value; var r = $('#srv', el); if (typedReceived) meta.received = r.disabled ? '' : r.value; }
-    PD.on(el, 'change', '#sp,#sd,#sg,#spm,#srv,#snt', function (e, t) { read(t.id === 'srv'); if (t.id === 'spm') meta.received = ''; draw(); });
-    PD.on(el, 'change', '[data-r]', function (e, t) { cart[+t.dataset.r].rate = PD.num(t.value); read(); draw(); });
-    PD.on(el, 'change', '[data-d]', function (e, t) { cart[+t.dataset.d].disc = PD.num(t.value); read(); draw(); });
-    PD.on(el, 'click', '[data-x]', function (e, t) { cart.splice(+t.dataset.x, 1); read(); draw(); });
-    PD.on(el, 'click', '#np', function () { read(); partyModal(function (id) { meta.partyId = id; draw(); }); });
-    PD.on(el, 'click', '[data-it]', function (e, t) {
-      var it = svc.item(t.dataset.it), lots = svc.wLotsOf(it.id);
-      var body = '<div class="tw"><table class="t"><thead><tr><th>Batch</th><th>Expiry</th><th class="r">MRP</th><th class="r">Shop price</th><th class="r">In stock</th><th class="r">Sell</th></tr></thead><tbody>' + lots.map(function (l) { var free = svc.wLeft(l) - cart.filter(function (c) { return c.lotId === l.id; }).reduce(function (a, c) { return a + c.serials.length; }, 0); return '<tr><td><b>' + esc(l.batchNo) + '</b></td><td>' + PD.fmtExp(l.expiry) + '</td><td class="r">' + PD.n2(l.mrp) + '</td><td class="r">' + PD.n2(l.sell || l.cost) + '</td><td class="r">' + free + '</td><td class="r"><input type="number" min="0" max="' + free + '" class="in sm" style="width:70px" data-q="' + l.id + '"' + (free > 0 ? '' : ' disabled') + '></td></tr>'; }).join('') + '</tbody></table></div><p class="hint">Earliest expiry is listed first.</p>';
-      PD.modal({ title: it.name + ' — choose batch', size: 'lg', body: body, foot: [{ label: 'Cancel' }, { label: 'Add', cls: 'p', fn: function (api) {
-        try { var tot = 0, tk2 = taken(); PD.$$('[data-q]', api.body).forEach(function (inp) { var q = Math.floor(PD.num(inp.value)); if (q <= 0) return; var lot = D().lots.find(function (x) { return x.id === inp.dataset.q; }); if (lot.block) throw new Error('Batch ' + lot.batchNo + ' is on ' + lot.block + ' and cannot be sold'); var s = freeSerials(lot, q, tk2); if (s.length < q) throw new Error('Batch ' + lot.batchNo + ' has only ' + s.length + ' free strips'); s.forEach(function (x) { tk2[x] = 1; }); addLot(lot, s); tot += q; });
-          if (!tot) throw new Error('Type a quantity against a batch'); hits = []; msg = '<span style="color:#2e8b57">✔ Added ' + tot + ' strips of ' + esc(it.name) + '</span>'; setTimeout(draw, 0);
-        } catch (er) { PD.err(er); return false; }
-      } }] });
+    function drawRec() {
+      var qv = ($('#bsq', el).value || '').toLowerCase(), a = [];
+      sales().forEach(function (s) { a.push({ k: 's', id: s.id, no: s.no, date: s.date, party: partyName(s.partyId), total: s.total, t: s.pay === 'cash' ? 'C' : s.pay === 'bank' ? 'U' : 'R' }); });
+      D().wdisp.forEach(function (d) { if (d.direct) a.push({ k: 'd', id: d.id, no: d.no, date: d.date, party: svc.wShopName(d.shopId) + ' (shop)', total: d.total, t: 'S' }); });
+      a = a.filter(function (r) { return !qv || (r.no + ' ' + r.party).toLowerCase().indexOf(qv) >= 0; }).sort(function (x, y) { return y.date.localeCompare(x.date) || y.no.localeCompare(x.no); }).slice(0, 20);
+      $('#rec', el).innerHTML = '<thead><tr><th>BillNo</th><th>BillDate</th><th>T</th><th>Party</th><th class="r">Amount</th></tr></thead><tbody>' + a.map(function (r) { return '<tr data-bn="' + r.k + r.id + '"><td>' + esc(r.no) + '</td><td>' + PD.fmtDate(r.date) + '</td><td>' + r.t + '</td><td>' + esc(r.party) + '</td><td class="r">' + PD.n2(r.total) + '</td></tr>'; }).join('') + '</tbody>';
+    }
+    function say(ok, t) { var m = $('#smsg', el); if (m) m.innerHTML = '<span style="color:' + (ok ? '#2e8b57' : '#c62828') + '">' + (ok ? '&#10004; ' : '&#10006; ') + esc(t) + '</span>'; }
+
+    /* item search */
+    function search() {
+      var q = $('#q', el), words = (q.value === '*' ? '' : q.value).trim().toLowerCase().split(/\s+/).filter(Boolean), sm = svc.wStockMap(), a = [], b = [], list = hayList();
+      for (var i = 0; i < list.length && a.length < 40; i++) { var e = list[i]; if (words.length && !words.every(function (w) { return e.hay.indexOf(w) >= 0; })) continue; if ((sm[e.it.id] || 0) > 0) a.push(e.it); else if (b.length < 40) b.push(e.it); }
+      results = a.concat(b).slice(0, 40).map(function (it) { return { it: it, st: sm[it.id] || 0 }; }); if (idx >= results.length) idx = 0;
+      var res = $('#res', el);
+      res.innerHTML = results.map(function (r, i) { var it = r.it; return '<div class="it ' + (i === idx ? 'on' : '') + '" data-i="' + i + '"><span class="nm"><b>' + (r.st > 0 ? '' : '# ') + esc(it.name) + '</b> ' + PD.schedBadge(it.schedule) + '<small> ' + esc(it.generic || '') + ' • ' + esc(svc.mfrName(it.mfrId)) + (it.rack ? ' • Shelf ' + esc(it.rack) : '') + '</small></span><span class="pr">' + PD.n2(it.mrp) + '<small>' + (r.st > 0 ? r.st : 'out') + '</small></span></div>'; }).join('') || '<div class="empty">No medicines match.</div>';
+      res.style.display = document.activeElement === q ? 'block' : 'none';
+      var on = $('.on', res); if (on) on.scrollIntoView({ block: 'nearest' });
+    }
+    function pick(itemId, focusQty) {
+      var it = svc.item(itemId), got = addItem(itemId, 1);
+      if (!got) { PD.toast(it.name + ' has no sellable stock left (out of stock, expired or on hold)', 'err'); return; }
+      var at = -1; cart.forEach(function (x, i) { if (lotOf(x).itemId === itemId) at = i; }); sel = at >= 0 ? at : cart.length - 1; drawCart();
+      var lot = lotOf(cart[sel]); say(true, it.name + ' • batch ' + lot.batchNo + ' (expires ' + PD.fmtExp(lot.expiry) + ') added');
+      if (focusQty) { var f = $('[data-q="' + sel + '"]', el); if (f) { f.focus(); f.select(); } }
+    }
+    PD.on(el, 'input', '#q', function () { idx = 0; search(); });
+    PD.on(el, 'focusin', '#q', function (e, t) { if (t.value === '*') t.select(); search(); });
+    PD.on(el, 'focusout', '#q', function () { setTimeout(function () { var r = $('#res', el); if (r) r.style.display = 'none'; }, 160); });
+    PD.on(el, 'keydown', '#q', function (e, q) {
+      if (e.key === 'ArrowDown') { idx = Math.min(idx + 1, results.length - 1); search(); e.preventDefault(); }
+      else if (e.key === 'ArrowUp') { idx = Math.max(idx - 1, 0); search(); e.preventDefault(); }
+      else if (e.key === 'Enter' && results[idx]) { e.preventDefault(); pick(results[idx].it.id, true); q.value = ''; idx = 0; $('#res', el).style.display = 'none'; }
+      else if (e.key === 'Escape') $('#res', el).style.display = 'none';
     });
-    PD.on(el, 'click', '#ssv', function () {
+    PD.on(el, 'mousedown', '#res [data-i]', function (e, t) { e.preventDefault(); pick(results[+t.dataset.i].it.id, false); $('#q', el).value = ''; });
+    /* strip scan */
+    PD.on(el, 'keydown', '#ssc', function (e, scn) {
+      if (e.key !== 'Enter') return; e.preventDefault(); var v = scn.value; scn.value = ''; if (!v.trim()) return;
+      var p = svc.wParse(v);
+      if (!p) say(false, 'Not a Medismart strip code');
+      else if (!p.lot || p.bad) say(false, 'Unknown strip ' + p.serial);
+      else if (p.lot.gone[p.idx]) say(false, p.serial + ' is not in stock');
+      else if (p.lot.block) say(false, 'Batch is on ' + p.lot.block + ': cannot be sold');
+      else if (taken()[p.serial]) say(false, p.serial + ' is already on the bill');
+      else {
+        var row = cart.find(function (x) { return x.lotId === p.lot.id; });
+        if (!row) { row = { lotId: p.lot.id, serials: [], rate: defRate(p.lot), disc: 0 }; var at = -1; cart.forEach(function (x, i) { if (lotOf(x).itemId === p.lot.itemId) at = i; }); if (at >= 0) cart.splice(at + 1, 0, row); else cart.push(row); }
+        row.serials.push(p.serial); sel = cart.indexOf(row); drawCart(); say(true, svc.itemName(p.lot.itemId) + ' • ' + p.serial);
+      }
+      $('#ssc', el).focus();
+    });
+
+    /* grid edits */
+    PD.on(el, 'change', '[data-q]', function (e, t) { sel = +t.dataset.q; setQty(sel, t.value); drawCart(); });
+    PD.on(el, 'change', '[data-rt]', function (e, t) { cart[+t.dataset.rt].rate = PD.num(t.value); drawCart(); });
+    PD.on(el, 'change', '[data-d]', function (e, t) { var d = PD.num(t.value); if (d < 0 || d > 100) { PD.toast('Discount must be 0 to 100', 'err'); d = 0; } cart[+t.dataset.d].disc = d; drawCart(); });
+    PD.on(el, 'change', '[data-b]', function (e, t) { sel = +t.dataset.b; changeBatch(sel, t.value); drawCart(); });
+    PD.on(el, 'keydown', '[data-q],[data-rt],[data-d]', function (e) { if (e.key === 'Enter' && !e.ctrlKey) { e.preventDefault(); var q = $('#q', el); q.focus(); q.select(); } });
+    PD.on(el, 'click', '#cart tr.cartrow', function (e, t) { if (e.target.closest('input,select')) return; sel = +t.dataset.r; PD.$$('#cart tr.cartrow', el).forEach(function (r) { r.classList.toggle('sel', r === t); }); });
+    function delRow() { if (sel < 0 || !cart[sel]) { PD.toast('Select a row in the grid, then press Delete'); return; } cart.splice(sel, 1); sel = Math.min(sel, cart.length - 1); drawCart(); }
+    PD.on(el, 'click', '#sdel', delRow);
+    PD.on(el, 'click', '#sclr', function () { if (!cart.length) return; PD.confirm('Clear all items from this bill?', 'Clear', true).then(function (ok) { if (ok) { cart = []; sel = -1; meta.received = ''; drawCart(); } }); });
+
+    /* bill header and payment */
+    PD.on(el, 'change', '#sp', function (e, t) { meta.party = t.value; meta.received = ''; if (isShop()) meta.pay = 'credit'; else if (meta.pay === 'credit' && meta.party === 'cashsale') meta.pay = 'cash'; cart.forEach(function (l) { l.rate = defRate(lotOf(l)); }); drawCart(); });
+    PD.on(el, 'change', '#sd', function (e, t) { meta.date = t.value || PD.today(); });
+    PD.on(el, 'change', '#sg', function (e, t) { meta.gst = t.checked; drawCart(); });
+    PD.on(el, 'change', '#spm', function (e, t) { meta.pay = t.value; meta.received = ''; totals(); });
+    PD.on(el, 'input', '#srv', function (e, t) { meta.received = t.value; totals(); });
+    PD.on(el, 'input', '#snt', function (e, t) { meta.note = t.value; });
+    PD.on(el, 'input', '#bsq', drawRec);
+    PD.on(el, 'click', '#np', function () { partyModal(function (id) { meta.party = id; build(); }); });
+    PD.on(el, 'click', '[data-bn]', function (e, t) {
+      var k = t.dataset.bn.charAt(0), id = t.dataset.bn.slice(1);
+      if (k === 's') { var s = sales().find(function (x) { return x.id === id; }); if (s) showSale(s, function () { drawRec(); }); }
+      else { var d = D().wdisp.find(function (x) { return x.id === id; }); if (d) PD.printHTML(saleHTML(dispAsSale(d)), 'Bill ' + d.no); }
+    });
+
+    function save(print) {
       try {
-        read(); var c = calc(), got = meta.pay === 'credit' ? 0 : (meta.received === '' ? c.total : PD.num(meta.received));
-        if (meta.partyId === 'cashsale' && PD.r2(c.total - got) > 0.005) throw new Error('A walk-in sale must be paid in full. Choose a party to keep a balance.');
-        var s = svc.wSale({ partyId: meta.partyId, date: meta.date, gst: meta.gst, pay: meta.pay, received: got, note: meta.note, lines: cart.map(function (l) { return { lotId: l.lotId, serials: l.serials, rate: l.rate, disc: l.disc }; }) });
-        PD.toast('Bill ' + s.no + ' saved • ' + PD.money(s.total), 'ok'); PD.printHTML(saleHTML(s), 'Bill ' + s.no); cart = []; hits = []; msg = '<span style="color:#2e8b57">✔ Bill ' + esc(s.no) + ' saved</span>'; draw();
+        if (!cart.length) throw new Error('Add at least one medicine');
+        var c = calc(), got = recvAmt(c), s;
+        if (isShop()) {
+          s = svc.wDirectDispatch(shopId(), cart.map(function (l) { return { lotId: l.lotId, serials: l.serials, rate: l.rate, disc: l.disc }; }), { date: meta.date, note: meta.note });
+          PD.toast('Sent to ' + svc.wShopName(s.shopId) + ' • bill ' + s.no + ' • ' + PD.money(s.total), 'ok'); if (print) PD.printHTML(saleHTML(dispAsSale(s)), 'Bill ' + s.no);
+        } else {
+          if (meta.party === 'cashsale' && PD.r2(c.total - got) > 0.005) throw new Error('A walk-in sale must be paid in full. Choose a party to keep a balance.');
+          s = svc.wSale({ partyId: meta.party, date: meta.date, gst: meta.gst, pay: meta.pay, received: got, note: meta.note, lines: cart.map(function (l) { return { lotId: l.lotId, serials: l.serials, rate: l.rate, disc: l.disc }; }) });
+          PD.toast('Bill ' + s.no + ' saved • ' + PD.money(s.total), 'ok'); if (print) PD.printHTML(saleHTML(s), 'Bill ' + s.no);
+        }
+        cart = []; sel = -1; meta.received = ''; drawCart(); drawRec(); say(true, 'Bill ' + s.no + ' saved'); $('#q', el).focus();
       } catch (e) { PD.err(e); }
-    });
-    draw();
+    }
+    PD.on(el, 'click', '#ssv', function () { save(false); });
+    PD.on(el, 'click', '#ssp', function () { save(true); });
+    el.addEventListener('keydown', function (e) { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(false); } else if (e.key === 'd' && e.ctrlKey) { e.preventDefault(); delRow(); } });
+    PD.hotkeys = PD.hotkeys || {}; PD.hotkeys.F3 = { el: el, fn: function () { var q = $('#q', el); q.focus(); q.select(); } }; PD.hotkeys.F10 = { el: el, fn: function () { save(true); } };
+    build();
   }
   open();
 } };
