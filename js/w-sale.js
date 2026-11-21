@@ -176,7 +176,7 @@ PD.views.wsale = { render: function (host, arg) {
       var parties = D().customers.filter(function (c) { return !c.isShop && c.active !== false && c.id !== 'cashsale'; }).sort(function (a, b) { return a.name.localeCompare(b.name); });
       var shops = D().shops.filter(function (s) { return s.active !== false; }).sort(function (a, b) { return a.name.localeCompare(b.name); });
       el.innerHTML = '<div class="msw ssw">' +
-        '<div class="sband"><b class="sb1">&#10010; Medismart Warehouse</b><span class="sb2">' + esc(shopN) + '</span><span class="sb3">01/04/' + fyA + ' &nbsp;TO&nbsp; 31/03/' + (fyA + 1) + '</span><span class="sb4">Login &nbsp; ' + esc(PD.user ? PD.user.name : '') + '</span></div>' +
+        '<div class="sband"><b class="sb1">&#10010; Arogya Bharti</b><span class="sb2">' + esc(shopN) + '</span><span class="sb3">01/04/' + fyA + ' &nbsp;TO&nbsp; 31/03/' + (fyA + 1) + '</span><span class="sb4">Login &nbsp; ' + esc(PD.user ? PD.user.name : '') + '</span></div>' +
         '<div class="stitle"><span>SALE</span><span>WS</span><span id="sgt">Gst</span></div>' +
         '<div class="shead"><label>VrNo:</label><input class="in" id="bno" readonly style="width:110px"><label>Date</label><input type="date" class="in" id="sd" value="' + meta.date + '" style="width:140px"><label>Party</label>' +
           '<select class="in" id="sp" style="min-width:240px"><option value="cashsale">Cash sale (walk-in)</option>' +
@@ -271,7 +271,7 @@ PD.views.wsale = { render: function (host, arg) {
     PD.on(el, 'keydown', '#ssc', function (e, scn) {
       if (e.key !== 'Enter') return; e.preventDefault(); var v = scn.value; scn.value = ''; if (!v.trim()) return;
       var p = svc.wParse(v);
-      if (!p) say(false, 'Not a Medismart strip code');
+      if (!p) say(false, 'Not an Arogya Bharti strip code');
       else if (!p.lot || p.bad) say(false, 'Unknown strip ' + p.serial);
       else if (p.lot.gone[p.idx]) say(false, p.serial + ' is not in stock');
       else if (p.lot.block) say(false, 'Batch is on ' + p.lot.block + ': cannot be sold');

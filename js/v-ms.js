@@ -3,7 +3,7 @@
 'use strict';
 var PD = window.PD, esc = PD.esc, svc = PD.svc, $ = PD.$;
 
-function band() { return '<div class="msband"><span class="mslogo">' + PD.icon('pill') + '</span><b>Medismart</b></div>'; }
+function band() { return '<div class="msband"><span class="mslogo">' + PD.icon('pill') + '</span><b>Arogya Bharti</b></div>'; }
 function supSelect(id) { return '<select class="in" id="' + id + '"><option value="">— select supplier —</option>' + PD.DB.suppliers.filter(function (s) { return s.active !== false; }).map(function (s) { return '<option value="' + s.id + '">' + esc(s.name) + '</option>'; }).join('') + '</select>'; }
 function field(label, inner, cls) { return '<div class="pf ' + (cls || '') + '"><label>' + label + '</label>' + inner + '</div>'; }
 

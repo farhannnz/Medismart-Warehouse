@@ -80,7 +80,7 @@ PD.views.purchase = { render: function (host, arg) {
 
   function newInvoice(el, a) {
     var pre = (arg && arg.prefill) || {}, grid, supplier = pre.supplierId || '', linkedOnly = true;
-    el.innerHTML = '<div class="msw pw"><div class="msband"><span class="mslogo">' + PD.icon('pill') + '</span><b>Medismart</b></div><div class="subtab"><span>Purchase Invoice</span></div>' +
+    el.innerHTML = '<div class="msw pw"><div class="msband"><span class="mslogo">' + PD.icon('pill') + '</span><b>Arogya Bharti</b></div><div class="subtab"><span>Purchase Invoice</span></div>' +
       '<div class="phead"><fieldset><legend>Invoice Details</legend><div class="pf"><label>Sl.No :</label><input class="in" readonly value="' + ((D.counters.PI || 0) + 1) + '"></div>' +
       '<div class="pf"><label>Date :</label>' + PD.field({ k: 'date', label: '', type: 'date' }, PD.today()) + '</div><div class="pf"><label>Invoice No :</label>' + PD.field({ k: 'invNo', label: '' }, pre.invNo || '') + '</div><div class="pf"><label>Due Date :</label>' + PD.field({ k: 'dueDate', label: '', type: 'date' }, PD.addDays(PD.today(), 30)) + '</div></fieldset>' +
       '<fieldset class="sd"><legend>Supplier Details</legend><div class="pf wide"><label>Name :</label>' + PD.field({ k: 'supplierId', label: '', type: 'select', options: supOpts, req: true }, supplier) + '</div>' +

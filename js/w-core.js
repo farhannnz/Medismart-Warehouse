@@ -353,7 +353,7 @@ svc.wPickScan = function (reqId, text) {
   var r = D().wreq.find(function (x) { return x.id === reqId; }); if (!r) return { ok: false, msg: 'Open a request first' };
   if (r.status !== 'Pending' && r.status !== 'Partly dispatched') return { ok: false, msg: 'This request is ' + r.status };
   svc.wResolveLines(r);
-  var p = svc.wParse(text); if (!p) return { ok: false, msg: 'Not a Medismart strip code: ' + String(text).slice(0, 40) };
+  var p = svc.wParse(text); if (!p) return { ok: false, msg: 'Not an Arogya Bharti strip code: ' + String(text).slice(0, 40) };
   if (!p.lot || p.bad) return { ok: false, msg: 'Unknown strip ' + p.serial + ' (not in this warehouse)' };
   var g = p.lot.gone[p.idx]; if (g) return { ok: false, msg: p.serial + ' is not in stock (' + (g.s === 'out' ? 'already sent to ' + (g.shop || 'a shop') + ' on ' + g.ref : g.s === 'bad' ? 'written off' : g.s) + ')' };
   if (p.lot.block) return { ok: false, msg: svc.itemName(p.lot.itemId) + ' batch ' + p.lot.batchNo + ' is on ' + p.lot.block + (p.lot.blockWhy ? ' (' + p.lot.blockWhy + ')' : '') + ' and cannot be sent' };

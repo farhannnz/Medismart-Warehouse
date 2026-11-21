@@ -141,7 +141,7 @@ PD.views.wscan = { render: function (host) {
   var sc = $('#sc', host); sc.focus();
   sc.addEventListener('keydown', function (e) {
     if (e.key !== 'Enter') return; e.preventDefault(); var p = svc.wParse(sc.value); sc.value = ''; var res = $('#res', host);
-    if (!p) { beep(false); res.innerHTML = '<div class="card"><div class="bd" style="color:#c62828"><b>Not a Medismart strip barcode.</b></div></div>'; return; }
+    if (!p) { beep(false); res.innerHTML = '<div class="card"><div class="bd" style="color:#c62828"><b>Not an Arogya Bharti strip barcode.</b></div></div>'; return; }
     if (!p.lot || p.bad) { beep(false); res.innerHTML = '<div class="card"><div class="bd" style="color:#c62828"><b>' + esc(p.serial) + '</b> is not in this warehouse.</div></div>'; return; }
     beep(true); var l = p.lot, it = svc.item(l.itemId), g = l.gone[p.idx];
     var st = g ? (g.s === 'out' ? '<span class="badge info">Sent to ' + esc(g.shop || 'a shop') + '</span> on ' + PD.fmtDate(g.d) + ' (' + esc(g.ref) + ')' : '<span class="badge bad">Written off</span> ' + esc(g.note || '') + ' (' + esc(g.ref) + ')') : '<span class="badge ok">In warehouse</span> on shelf <b>' + esc(it.rack || '—') + '</b>';

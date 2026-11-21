@@ -273,7 +273,7 @@ function niceAuth(e) {
 }
 function ls(k, v) { try { if (v === undefined) return JSON.parse(localStorage.getItem(k) || 'null'); localStorage.setItem(k, JSON.stringify(v)); } catch (e) { return null; } }
 function offlineErr(e) { return !navigator.onLine || /offline|unavailable|network/i.test(String(e && (e.code || e.message))); }
-function box(inner) { document.body.className = ''; document.body.innerHTML = '<div class="login"><div class="card box"><div class="brand" style="padding:0;color:var(--ink)"><span class="lg">' + PD.icon('pill') + '</span><b>' + (APP === 'shop' ? 'Medismart' : 'Medismart Warehouse') + '</b></div>' + inner + '</div></div>'; }
+function box(inner) { document.body.className = ''; document.body.innerHTML = '<div class="login"><div class="card box"><div class="brand" style="padding:0;color:var(--ink)"><span class="lg">' + PD.icon('pill') + '</span><b>' + (APP === 'shop' ? 'Medismart' : 'Arogya Bharti') + '</b></div>' + inner + '</div></div>'; }
 var q$ = function (s) { return document.querySelector(s); };
 
 function loginScreen(msg) {
@@ -343,9 +343,9 @@ function loadProfile(u) {
   }).then(function (p) { if (p) ls(key, p); return p; }).catch(function (e) { var c = ls(key); if (c && offlineErr(e)) return c; throw e; });
 }
 function checkProfile(p) {
-  if (!p) return blocked('No access', 'This login has no Medismart profile. Ask the warehouse admin to create your login.');
+  if (!p) return blocked('No access', 'This login has no Arogya Bharti profile. Ask the warehouse admin to create your login.');
   if (p.active === false) return blocked('Login switched off', 'Your login has been switched off by the admin.');
-  if (p.app !== APP) return blocked('Wrong app', 'This is a ' + (p.app === 'shop' ? 'shop' : 'warehouse') + ' login. Open the ' + (p.app === 'shop' ? 'shop (Medismart)' : 'Medismart Warehouse') + ' app to use it.');
+  if (p.app !== APP) return blocked('Wrong app', 'This is a ' + (p.app === 'shop' ? 'shop' : 'warehouse') + ' login. Open the ' + (p.app === 'shop' ? 'shop (Medismart)' : 'Arogya Bharti') + ' app to use it.');
   if (APP === 'shop') {
     if (!p.shop) return blocked('Shop not found', 'Your shop is not set up yet. Ask the warehouse admin.');
     if (p.shop.active === false) return blocked('Shop closed', 'This shop has been switched off by the warehouse admin.');
@@ -431,11 +431,11 @@ PD.load = function () {
   }).catch(function (e) {
     console.warn('cloud load', e);
     if (e && e.code === 'permission-denied') return blocked('No access', 'This login is not allowed to open the data. Check the Firestore rules (see SETUP.md).');
-    if (!C.me) { msgScreen('No internet', 'Medismart needs the internet to sign in. Connect and try again.'); return new Promise(function () {}); }
+    if (!C.me) { msgScreen('No internet', 'Arogya Bharti needs the internet to sign in. Connect and try again.'); return new Promise(function () {}); }
     return cacheGet().then(function (cache) {
       C.dir = ls('ms_dir_' + APP) || [C.me];
       if (cache && cache.db) { C.rev = cache.rev || 0; C.dirty = !!cache.dirty; setTimeout(function () { setState('offline'); }, 50); return cache.db; }
-      msgScreen('No internet', 'Medismart needs the internet the first time it opens on this computer. Connect and try again.');
+      msgScreen('No internet', 'Arogya Bharti needs the internet the first time it opens on this computer. Connect and try again.');
       return new Promise(function () {});
     });
   });

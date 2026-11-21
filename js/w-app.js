@@ -120,7 +120,7 @@ function act(a) {
   if (a === 'closecur') return cur === 'home' ? 0 : closeWin(cur);
   if (a === 'closeall') { wins = []; cur = 'home'; return renderWin(); }
   if (a === 'closeother') { wins = wins.filter(function (w) { return w.key === cur; }); return renderWin(); }
-  if (a === 'about') return PD.modal({ title: 'About Medismart', size: 'sm', body: '<p><b>Medismart Warehouse</b> - pharmacy billing, stock keeping &amp; accounting.</p><p class="mut">Data is saved online (Firebase) and shared with the shops automatically.</p>', foot: [{ label: 'OK', cls: 'p' }] });
+  if (a === 'about') return PD.modal({ title: 'About Arogya Bharti', size: 'sm', body: '<p><b>Arogya Bharti</b> - pharmacy billing, stock keeping &amp; accounting.</p><p class="mut">Data is saved online (Firebase) and shared with the shops automatically.</p>', foot: [{ label: 'OK', cls: 'p' }] });
   if (a === 'save') { var b = $('#view .btn.p:not(:disabled)'); return b && b.click(); }
   if (a === 'clear') { var w = wins.find(function (x) { return x.key === cur; }); if (w) { w.arg = { fresh: 1, tab: w.arg && w.arg.tab }; renderWin(); } return; }
   if ((m = /^nav:(-?1)$/.exec(a))) { var ks = ['home'].concat(wins.map(function (w) { return w.key; })), i = ks.indexOf(cur); cur = ks[(i + (+m[1]) + ks.length) % ks.length]; return renderWin(); }
@@ -134,12 +134,12 @@ function act(a) {
 function shell() {
   var tb = TOOLS.filter(function (t) { return t === '|' || can(t[2].split(':')[0]) || ACTION_RX.test(t[2]) || t[2] === 'save' || t[2] === 'clear'; }).map(function (t) { return t === '|' ? '<i class="tsep"></i>' : '<button class="tbtn lbl" title="' + esc(t[0]) + '" data-a="' + t[2] + '" style="color:' + t[3] + '">' + PD.icon(t[1]) + '<span>' + esc(t[0].replace(/\s*\(.*\)$/, '')) + '</span></button>'; }).join('');
   document.body.className = 'mdi';
-  document.body.innerHTML = '<div class="win"><div class="titlebar"><span class="ico">' + PD.icon('pill') + '</span><b>Medismart Warehouse</b><span style="margin-left:10px;opacity:.85">' + esc(PD.DB.shop.name) + '</span><span class="sp"></span><span id="dbt"></span></div>' +
+  document.body.innerHTML = '<div class="win"><div class="titlebar"><span class="ico">' + PD.icon('pill') + '</span><b>Arogya Bharti</b><span class="sp"></span><span id="dbt"></span></div>' +
     '<div class="menubar" id="mbar"></div><div class="toolbar" id="tbar">' + tb + '<span class="sp"></span><div class="msearch">' + PD.icon('search') + '<input id="gsr" placeholder="Search (Ctrl+I)" readonly></div></div>' +
     '<div class="mdi-body"><div class="lstrip" id="lstrip" style="display:none"></div>' +
     '<div class="mdi-main"><div class="wtabs" id="wtabs"></div><main class="view" id="view"></main></div><div class="docks" id="docks"></div></div>' +
-    '<div class="statusbar" id="sbar"><span id="rc"></span><span class="sp"></span><span id="sync" class="sync"></span><span id="bell" class="bell" title="Alerts"></span><span class="usr">' + PD.icon('users') + esc(PD.user.name) + '</span><b class="plog">Medismart <em>Warehouse</em></b><span id="clk"></span></div></div>';
-  $('#dbt').textContent = 'Medismart Warehouse';
+    '<div class="statusbar" id="sbar"><span id="rc"></span><span class="sp"></span><span id="sync" class="sync"></span><span id="bell" class="bell" title="Alerts"></span><span class="usr">' + PD.icon('users') + esc(PD.user.name) + '</span><b class="plog">Arogya <em>Bharti</em></b><span id="clk"></span></div></div>';
+  $('#dbt').textContent = 'Warehouse';
   drawMenus(); drawDocks(); PD.cloud.paint();
   $('#gsr').onclick = palette;
   PD.on($('#tbar'), 'click', '[data-a]', function (e, t) { act(t.dataset.a); });
