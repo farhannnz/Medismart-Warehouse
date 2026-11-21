@@ -141,6 +141,34 @@ svc.wImportStock = function (rows) {
   PD.log('Stock imported', made + ' items, ' + strips + ' strips'); PD.save(); return { items: made, strips: strips };
 };
 
+/* Batch Wise Stock sheet (Excel) -> import rows. Columns found by their heading: ITEM NAME, BATCH, EXPIRY DATE, MRP, Purchase rate, P.T.R, CLOSING QTY. */
+svc.wStockSheetRows = function (wb) {
+  var ws = wb.Sheets[wb.SheetNames[0]], arr = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true }), norm = function (x) { return String(x == null ? '' : x).toLowerCase().replace(/[^a-z0-9]/g, ''); };
+  var hi = -1, col = {}, pats = { name: /^(itemname|productname|product|item|medicine)$/, batch: /^(batch|batchno)$/, exp: /^(expirydate|expiry|exp)$/, mrp: /^mrp$/, cost: /^(purchaserate|purrate|prate|costrate)$/, ptr: /^(ptr|pts)$/, qty: /^(clsoingqty|closingqty|closeqty|clqty|qty|stock)$/ };
+  for (var i = 0; i < Math.min(arr.length, 30) && hi < 0; i++) { var m = {}; (arr[i] || []).forEach(function (c, ci) { var k = norm(c); Object.keys(pats).forEach(function (f) { if (m[f] == null && pats[f].test(k)) m[f] = ci; }); }); if (m.name != null && m.qty != null && m.batch != null) { hi = i; col = m; } }
+  if (hi < 0) throw new Error('Could not find the columns ITEM NAME, BATCH and CLOSING QTY in the first rows of the sheet');
+  function expOf(v) {
+    var d = null; if (typeof v === 'number' && v > 20000) d = new Date(Math.round((v - 25569) * 86400000));
+    else { var t = String(v || '').trim(), x = t.match(/^([0-9]{1,2})[-/.]([0-9]{1,2})[-/.]([0-9]{2,4})$/), y = t.match(/^([0-9]{4})-([0-9]{2})/), z = t.match(/^([0-9]{1,2})[-/.]([0-9]{2,4})$/); if (x) d = new Date(Date.UTC(+x[3] < 100 ? 2000 + +x[3] : +x[3], +x[2] - 1, 1)); else if (y) d = new Date(Date.UTC(+y[1], +y[2] - 1, 1)); else if (z) d = new Date(Date.UTC(+z[2] < 100 ? 2000 + +z[2] : +z[2], +z[1] - 1, 1)); }
+    return d && !isNaN(d) ? d.getUTCFullYear() + '-' + ('0' + (d.getUTCMonth() + 1)).slice(-2) : '';
+  }
+  var rows = [], skipped = 0, strips = 0, zeroCost = 0;
+  for (var r = hi + 1; r < arr.length; r++) {
+    var a = arr[r], name = String(a[col.name] || '').trim(), q = Math.floor(PD.num(a[col.qty])), ex = expOf(a[col.exp]);
+    if (!name && !q) continue;
+    if (!name || !(q > 0) || !ex) { skipped++; continue; }
+    var cost = PD.num(a[col.cost]), ptr = col.ptr != null ? PD.num(a[col.ptr]) : 0; if (!(cost > 0)) zeroCost++;
+    rows.push({ name: name, batchNo: String(a[col.batch] || '').trim() || 'OPEN', expiry: ex, strips: q, cost: cost, sell: ptr > 0 ? ptr : cost, mrp: PD.num(a[col.mrp]), rack: '' }); strips += q;
+  }
+  return { rows: rows, strips: strips, skipped: skipped, zeroCost: zeroCost };
+};
+/* delete ALL current lots (strips) and put the sheet's batches in as the new stock. Items, shops, accounts and old dispatch / bill history are kept. */
+svc.wReplaceStock = function (rows) {
+  if (!rows || !rows.length) throw new Error('Nothing to import');
+  D().lots = []; D().wreq.forEach(function (r) { r.picked = []; });
+  var o = svc.wImportStock(rows); D().acctStart = D().acctStart || PD.today(); PD.log('Stock replaced from Excel', o.items + ' batches, ' + o.strips + ' strips'); PD.save(); return o;
+};
+
 /* ---------- add stock ---------- */
 /* one bill line: strips bought + free strips, rate per strip, discount %, GST % */
 svc.wCalcLine = function (l) {
